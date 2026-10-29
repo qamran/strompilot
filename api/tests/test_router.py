@@ -9,7 +9,7 @@ from strompilot.llm.client import (
     SPARK_OPEN_MODEL,
     WONDER_MODEL,
 )
-from strompilot.llm.types import LlmError, Message
+from strompilot.llm.types import ImageAttachment, LlmError, Message
 from tests.fakes import StubLeg, reply
 
 
@@ -258,6 +258,53 @@ def test_router_strips_personal_data_before_legs() -> None:
     )
     (sent,) = spark.calls
     assert sent[0].content == "Mail [E-Mail entfernt], bitte planen"
+
+
+def test_router_preserves_images_through_redaction() -> None:
+    spark = StubLeg(SPARK_MODEL, [reply("ok")])
+    router = make_router(
+        spark, StubLeg(WONDER_MODEL, []), StubLeg(SPARK_OPEN_MODEL, [])
+    )
+    image = ImageAttachment(mime="image/png", b64="aGk=")
+    router.chat(
+        "analyst",
+        [Message(role="user", content="lies ab", image=image)],
+        500,
+    )
+    (sent,) = spark.calls
+    assert sent[0].image == image
+
+
+def test_distinct_images_do_not_stall() -> None:
+    spark = StubLeg(SPARK_MODEL, [reply("ok")] * 3)
+    router = make_router(
+        spark, StubLeg(WONDER_MODEL, []), StubLeg(SPARK_OPEN_MODEL, [])
+    )
+    for index in range(3):
+        router.chat(
+            "analyst",
+            [
+                Message(
+                    role="user",
+                    content="read it",
+                    image=ImageAttachment(mime="image/png", b64=f"img{index}"),
+                )
+            ],
+            500,
+        )
+    assert len(router.spend_log) == 3
+
+
+def test_same_image_three_times_still_stalls() -> None:
+    spark = StubLeg(SPARK_MODEL, [reply("ok")] * 3)
+    router = make_router(
+        spark, StubLeg(WONDER_MODEL, []), StubLeg(SPARK_OPEN_MODEL, [])
+    )
+    image = ImageAttachment(mime="image/png", b64="same")
+    router.chat("analyst", [Message(role="user", content="x", image=image)], 500)
+    router.chat("analyst", [Message(role="user", content="x", image=image)], 500)
+    with pytest.raises(GuardError, match="repeated identical calls"):
+        router.chat("analyst", [Message(role="user", content="x", image=image)], 500)
 
 
 def test_cost_rail_trips_after_logging_the_call() -> None:

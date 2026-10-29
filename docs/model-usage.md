@@ -25,8 +25,10 @@ exists so judges and auditors can verify our Meta tooling use in one place.
   so this register claims none.
 - Prompts are short noun phrases naming one concept per request, such as
   electricity meter or roof surface. Commands and questions are unreliable.
-- The docs recommend Spark for scene understanding first, then passing the
-  named concept to SAM for masks. SP-09 follows exactly that pattern.
+- SP-09 pins the prompt `digital display`: a live shootout on the meter
+  fixtures showed it was the only phrase that boxed the LCD, at
+  confidence around 0.7-0.8. The crop goes to Spark for digit reading;
+  on zero matches or SAM errors the full photo is read instead.
 
 ## Possible later, not in the plan
 

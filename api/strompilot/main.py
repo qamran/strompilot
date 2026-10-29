@@ -1,6 +1,7 @@
 """Strompilot FastAPI application."""
 
 import os
+import uuid
 from collections.abc import Iterator
 from datetime import UTC, date, datetime, timedelta
 from functools import partial
@@ -9,7 +10,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph.state import CompiledStateGraph
@@ -24,8 +25,21 @@ from strompilot.flexalarm.loop import run_once
 from strompilot.flexalarm.models import Alert, WatchReport
 from strompilot.flexalarm.store import AlertStore
 from strompilot.lifeplan.loaders import load_price_bars
+from strompilot.lifeplan.schemas import DeviceConstraint
+from strompilot.llm.types import LlmError
 from strompilot.memory.models import Episode, MemoryError, Preference
 from strompilot.memory.store import MemoryStore
+from strompilot.metervision.calibrate import FALLBACK_ANNUAL_KWH, calibrate
+from strompilot.metervision.models import (
+    Calibration,
+    MeterError,
+    MeterReading,
+    ReplanDiff,
+)
+from strompilot.metervision.pipeline import MeterVision, process_photo
+from strompilot.metervision.replan import day_plan_totals, diff_totals
+from strompilot.metervision.sam import SamClient
+from strompilot.metervision.store import MeterStore
 from strompilot.prices.models import BERLIN, PriceSeries
 from strompilot.prices.service import get_day_ahead_prices
 from strompilot.tariff.defaults import DEFAULTS
@@ -354,3 +368,170 @@ def read_alerts(
     except MemoryError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return AlertsResponse(household_id=household_id, alerts=alerts)
+
+
+class ReadingsResponse(BaseModel):
+    """One household's meter readings, oldest first."""
+
+    household_id: str
+    readings: list[MeterReading]
+
+
+class ConfirmBody(BaseModel):
+    """Human confirmation with the re-plan context."""
+
+    corrected_value_kwh: float | None = None
+    target_date: date | None = None
+    devices: list[DeviceConstraint] | None = None
+
+
+class ConfirmResponse(BaseModel):
+    """Confirmed reading plus calibration and re-plan diff, if any."""
+
+    reading: MeterReading
+    calibration: Calibration | None
+    diff: ReplanDiff | None
+    note: str
+
+
+def get_meter_vision() -> MeterVision:
+    """Build the production vision deps for one request."""
+    meta_key = os.environ.get("META_API_KEY", "")
+    baseten_key = os.environ.get("BASETEN_API_KEY", "")
+    if not meta_key or not baseten_key:
+        raise HTTPException(status_code=500, detail="model keys missing")
+    return MeterVision(
+        router=ModelRouter.from_keys(meta_key, baseten_key),
+        sam=SamClient(meta_key),
+    )
+
+
+def _photos_dir() -> Path:
+    """Return the meter photo directory, honoring METER_PHOTOS_DIR."""
+    override = os.environ.get("METER_PHOTOS_DIR")
+    if override:
+        return Path(override)
+    return Path(__file__).resolve().parent.parent.parent / "data" / "meter_photos"
+
+
+_METER_MIME_EXTENSIONS = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+    "image/gif": "gif",
+}
+_MAX_PHOTO_BYTES = 10 * 1024 * 1024
+
+
+@app.post("/meter/readings", response_model=MeterReading)
+def propose_reading(
+    household_id: str,
+    file: UploadFile = File(...),
+    vision: MeterVision = Depends(get_meter_vision),
+) -> MeterReading:
+    """Read one meter photo into a proposed reading."""
+    if not household_id.strip():
+        raise HTTPException(status_code=422, detail="household_id must not be blank")
+    mime = file.content_type or ""
+    extension = _METER_MIME_EXTENSIONS.get(mime)
+    if extension is None:
+        raise HTTPException(status_code=422, detail="photo must be an image")
+    photo = file.file.read()
+    if len(photo) > _MAX_PHOTO_BYTES:
+        raise HTTPException(status_code=422, detail="photo exceeds 10 MB")
+    try:
+        proposal = process_photo(photo, mime, vision.sam, vision.router)
+    except MeterError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except LlmError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    photos = _photos_dir()
+    photos.mkdir(parents=True, exist_ok=True)
+    photo_path = photos / f"{uuid.uuid4().hex}.{extension}"
+    photo_path.write_bytes(photo)
+    try:
+        reading = MeterStore(_memory_db()).propose(
+            household_id=household_id,
+            value_kwh=proposal.value_kwh,
+            read_at=datetime.now(UTC),
+            confidence=proposal.confidence,
+            sam_box=(
+                f"{proposal.sam_box.x1},{proposal.sam_box.y1},"
+                f"{proposal.sam_box.x2},{proposal.sam_box.y2}"
+                if proposal.sam_box
+                else None
+            ),
+            photo_path=str(photo_path),
+        )
+    except MeterError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return reading.model_copy(update={"photo_path": photo_path.name})
+
+
+@app.get("/meter/readings", response_model=ReadingsResponse)
+def read_readings(
+    household_id: str,
+    limit: int = Query(default=50, ge=1, le=200),
+) -> ReadingsResponse:
+    """List one household's meter readings, oldest first."""
+    try:
+        readings = MeterStore(_memory_db()).list_readings(household_id, limit=limit)
+    except MeterError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    public = [
+        reading.model_copy(update={"photo_path": Path(reading.photo_path).name})
+        for reading in readings
+    ]
+    return ReadingsResponse(household_id=household_id, readings=public)
+
+
+def _annual_pref(memory: MemoryStore, household_id: str) -> float:
+    """Read the calibrated annual use, or the fallback before proof."""
+    value = memory.get_preference(household_id, "annual_kwh")
+    if isinstance(value, (int, float)) and value > 0:
+        return float(value)
+    return FALLBACK_ANNUAL_KWH
+
+
+@app.post("/meter/readings/{reading_id}/confirm", response_model=ConfirmResponse)
+def confirm_reading(
+    reading_id: int,
+    household_id: str,
+    body: ConfirmBody,
+) -> ConfirmResponse:
+    """Confirm one reading and show the re-plan diff, if any."""
+    store = MeterStore(_memory_db())
+    memory = _store()
+    try:
+        stored = store.confirm(household_id, reading_id, body.corrected_value_kwh)
+    except MeterError as exc:
+        status = 404 if "not found" in str(exc) else 422
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+    reading = stored.model_copy(update={"photo_path": Path(stored.photo_path).name})
+    calibration = calibrate(store.confirmed(household_id))
+    if calibration is None:
+        return ConfirmResponse(
+            reading=reading,
+            calibration=None,
+            diff=None,
+            note="Noch kein Jahresvergleich möglich: Ein weiterer "
+            "bestätigter Zählerstand kalibriert den Verbrauch.",
+        )
+    old_annual = _annual_pref(memory, household_id)
+    memory.set_preference(household_id, "annual_kwh", calibration.annual_kwh)
+    if not body.devices:
+        return ConfirmResponse(
+            reading=reading,
+            calibration=calibration,
+            diff=None,
+            note="Jahresverbrauch kalibriert, kein Geräteplan zum Vergleich übergeben.",
+        )
+    now = datetime.now(BERLIN)
+    target = body.target_date or now.date() + timedelta(days=1)
+    bars = load_price_bars(target, _cache_dir(), datetime.now(UTC), DEFAULTS).bars
+    before = day_plan_totals(body.devices, bars, old_annual, target)
+    after = day_plan_totals(body.devices, bars, calibration.annual_kwh, target)
+    diff = diff_totals(before, after)
+    return ConfirmResponse(
+        reading=reading, calibration=calibration, diff=diff, note=diff.note
+    )

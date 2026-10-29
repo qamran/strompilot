@@ -5,11 +5,20 @@ from typing import Protocol
 
 
 @dataclass(frozen=True)
+class ImageAttachment:
+    """One inline image as base64 bytes with its MIME type."""
+
+    mime: str
+    b64: str
+
+
+@dataclass(frozen=True)
 class Message:
-    """One chat turn."""
+    """One chat turn, optionally carrying one image."""
 
     role: str
     content: str
+    image: ImageAttachment | None = None
 
 
 @dataclass(frozen=True)

@@ -8,7 +8,7 @@ from strompilot.llm.client import (
     SPARK_MODEL,
     ChatClient,
 )
-from strompilot.llm.types import LlmError, Message
+from strompilot.llm.types import ImageAttachment, LlmError, Message
 
 
 def test_chat_posts_shape_and_parses_result(
@@ -276,3 +276,43 @@ def test_chat_raises_on_transport_error(
     client = ChatClient(META_BASE_URL, "test-key", SPARK_MODEL)
     with pytest.raises(LlmError, match="request failed"):
         client.chat([Message(role="user", content="hi")], max_tokens=10)
+
+
+def test_chat_serializes_image_parts(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self) -> dict[str, object]:
+            return {"choices": [{"message": {"content": "1234"}}]}
+
+    def fake_post(
+        url: str, headers: dict[str, str], json: dict[str, object], timeout: float
+    ) -> FakeResponse:
+        del url, headers, timeout
+        captured["messages"] = json["messages"]
+        return FakeResponse()
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    client = ChatClient(META_BASE_URL, "test-key", SPARK_MODEL)
+    message = Message(
+        role="user",
+        content="read the meter",
+        image=ImageAttachment(mime="image/png", b64="aGk="),
+    )
+    client.chat([message], max_tokens=10)
+    assert captured["messages"] == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "read the meter"},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,aGk="},
+                },
+            ],
+        }
+    ]

@@ -12,4 +12,4 @@ def test_health_returns_ok_with_contract_version() -> None:
     payload = response.json()
     assert payload["status"] == "ok"
     assert payload["service"] == "strompilot-api"
-    assert payload["contract_version"] == "0.5.0"
+    assert payload["contract_version"] == "0.6.0"

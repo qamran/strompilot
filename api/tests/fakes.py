@@ -8,6 +8,7 @@ from strompilot.lifeplan.loaders import LoadedPrices
 from strompilot.lifeplan.schemas import DeviceConstraint, PriceBar
 from strompilot.llm.client import SPARK_MODEL
 from strompilot.llm.types import ChatResult, Message
+from strompilot.metervision.sam import SegmentBox
 from strompilot.prices.models import BERLIN, PricePoint, PriceSeries
 
 
@@ -130,6 +131,24 @@ class StubLeg:
         return next_up
 
 
+class FakeSam:
+    """Scripted SAM segmenter that records its prompts."""
+
+    def __init__(self, script: list[list[SegmentBox] | Exception]) -> None:
+        self._script = list(script)
+        self.prompts: list[str] = []
+
+    def segment(self, b64: str, mime: str, prompt: str) -> list[SegmentBox]:
+        del b64, mime
+        self.prompts.append(prompt)
+        if not self._script:
+            raise AssertionError("no scripted boxes left")
+        next_up = self._script.pop(0)
+        if isinstance(next_up, Exception):
+            raise next_up
+        return next_up
+
+
 class FakeRouter:
     """Scripted per-worker router for worker and graph tests."""
 
@@ -139,6 +158,7 @@ class FakeRouter:
         self.efforts: list[str | None] = []
         self.temps: list[float | None] = []
         self.prompts: list[str] = []
+        self.messages: list[list[Message]] = []
 
     def chat(
         self,
@@ -152,6 +172,7 @@ class FakeRouter:
         self.calls.append(worker)
         self.efforts.append(reasoning_effort)
         self.temps.append(temperature)
+        self.messages.append(messages)
         self.prompts.append(
             "\n".join(f"{message.role}: {message.content}" for message in messages)
         )

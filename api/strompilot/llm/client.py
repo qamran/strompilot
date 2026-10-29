@@ -29,6 +29,24 @@ class ChatClient:
         self.model = model
         self._timeout = timeout
 
+    @staticmethod
+    def _to_wire(message: Message) -> dict[str, object]:
+        """Serialize one turn, expanding an image to content parts."""
+        if message.image is None:
+            return {"role": message.role, "content": message.content}
+        return {
+            "role": message.role,
+            "content": [
+                {"type": "text", "text": message.content},
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{message.image.mime};base64,{message.image.b64}"
+                    },
+                },
+            ],
+        }
+
     def chat(
         self,
         messages: list[Message],
@@ -43,10 +61,7 @@ class ChatClient:
         """
         payload: dict[str, object] = {
             "model": self.model,
-            "messages": [
-                {"role": message.role, "content": message.content}
-                for message in messages
-            ],
+            "messages": [self._to_wire(message) for message in messages],
             "max_tokens": max_tokens,
         }
         if reasoning_effort is not None:

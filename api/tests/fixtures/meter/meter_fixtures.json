@@ -1,0 +1,35 @@
+[
+  {
+    "name": "meter_clean",
+    "file": "meter_clean.png",
+    "expected_kwh": 4217.3,
+    "lcd": [
+      90,
+      170,
+      710,
+      430
+    ]
+  },
+  {
+    "name": "meter_obis",
+    "file": "meter_obis.png",
+    "expected_kwh": 12893.7,
+    "lcd": [
+      90,
+      170,
+      710,
+      430
+    ]
+  },
+  {
+    "name": "meter_dim",
+    "file": "meter_dim.png",
+    "expected_kwh": 365.0,
+    "lcd": [
+      90,
+      170,
+      710,
+      430
+    ]
+  }
+]

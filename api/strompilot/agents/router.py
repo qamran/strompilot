@@ -1,5 +1,6 @@
 """Model router: per-worker legs, per-call fallback, spend log."""
 
+import hashlib
 from dataclasses import dataclass
 
 from strompilot.llm.client import (
@@ -99,7 +100,11 @@ class ModelRouter:
             known = ", ".join(sorted(self._legs))
             raise ValueError(f"unknown worker {worker!r}; known: {known}")
         messages = [
-            Message(role=message.role, content=redact(message.content).text)
+            Message(
+                role=message.role,
+                content=redact(message.content).text,
+                image=message.image,
+            )
             for message in messages
         ]
         primary, fallback = self._legs[worker]
@@ -135,6 +140,12 @@ class ModelRouter:
 
     @staticmethod
     def _signature(worker: str, messages: list[Message]) -> str:
-        """Identify a call by worker plus its latest turn."""
+        """Identify a call by worker plus its latest turn and image."""
         last = messages[-1] if messages else Message(role="", content="")
-        return f"{worker}:{last.role}:{last.content.strip()}"
+        image = ""
+        if last.image is not None:
+            digest = hashlib.sha1(
+                last.image.b64.encode("utf-8", "replace")
+            ).hexdigest()[:12]
+            image = f":{last.image.mime}:{digest}"
+        return f"{worker}:{last.role}:{last.content.strip()}{image}"
