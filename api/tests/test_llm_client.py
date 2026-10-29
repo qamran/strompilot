@@ -205,6 +205,62 @@ def test_chat_omits_reasoning_effort_by_default(
     assert "reasoning_effort" not in payload
 
 
+def test_chat_sends_temperature_when_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self) -> dict[str, object]:
+            return {"choices": [{"message": {"content": "x"}}]}
+
+    def fake_post(
+        url: str, headers: dict[str, str], json: dict[str, object], timeout: float
+    ) -> FakeResponse:
+        del url, headers, timeout
+        captured["payload"] = json
+        return FakeResponse()
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    client = ChatClient(META_BASE_URL, "test-key", SPARK_MODEL)
+    client.chat([Message(role="user", content="hi")], max_tokens=100, temperature=0.0)
+    payload = captured["payload"]
+    assert isinstance(payload, dict)
+    assert payload["temperature"] == 0.0
+
+
+def test_chat_omits_temperature_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self) -> dict[str, object]:
+            return {"choices": [{"message": {"content": "x"}}]}
+
+    def fake_post(
+        url: str, headers: dict[str, str], json: dict[str, object], timeout: float
+    ) -> FakeResponse:
+        del url, headers, timeout
+        captured["payload"] = json
+        return FakeResponse()
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    client = ChatClient(META_BASE_URL, "test-key", SPARK_MODEL)
+    client.chat([Message(role="user", content="hi")], max_tokens=100)
+    payload = captured["payload"]
+    assert isinstance(payload, dict)
+    assert "temperature" not in payload
+
+
 def test_chat_raises_on_transport_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

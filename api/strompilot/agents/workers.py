@@ -1,24 +1,31 @@
-"""Worker nodes: thin SP-04 wiring with simple first prompts."""
+"""Worker nodes: extraction, optimization, narration, review."""
 
 import json
 from typing import Any
 
+from pydantic import ValidationError
+
+from strompilot.lifeplan.errors import LifeplanError
+from strompilot.lifeplan.extract import analyze
+from strompilot.lifeplan.loaders import LoadedPrices, PriceLoader
+from strompilot.lifeplan.narrate import narrate
+from strompilot.lifeplan.optimize import optimize
+from strompilot.lifeplan.schemas import (
+    HouseholdConstraints,
+    ScheduledSlot,
+)
 from strompilot.llm.client import LOW_EFFORT, MINIMAL_EFFORT
-from strompilot.llm.types import LlmError, Message
+from strompilot.llm.types import ChatRouter, LlmError, Message
 
 from .guards import approval_granted, audit_event, review_cap_reached
-from .router import ChatRouter
-from .state import CriticVerdict, PlanState, Slot
+from .state import CitationState, CriticVerdict, PlanState, PriceBarState, Slot
 
 # Budgets cover thinking plus the answer: a one-word reply costs about
 # 50 completion tokens, and trivial JSON costs about 230 (live probes).
 PERCEIVE_TOKENS = 100
-ANALYST_TOKENS = 1000
-SCHEDULER_TOKENS = 1200
-EXPLAINER_TOKENS = 1500
 CRITIC_TOKENS = 1000
 
-_SLOT_KEYS = ("device", "start", "end", "reason")
+DETERMINISTIC = "deterministic"
 
 
 def _attributed(state: PlanState, block: str, model: str) -> dict[str, str]:
@@ -28,24 +35,25 @@ def _attributed(state: PlanState, block: str, model: str) -> dict[str, str]:
 
 def _format_schedule(state: PlanState) -> str:
     """Render the draft schedule as plain lines."""
-    lines = [
-        f"- {slot['device']}: {slot['start']} bis {slot['end']} ({slot['reason']})"
-        for slot in state.get("schedule", [])
-    ]
+    lines = []
+    for slot in state.get("schedule", []):
+        line = f"- {slot['device']}: {slot['start']} bis {slot['end']}"
+        if "cost_eur" in slot:
+            line += f" ({slot['cost_eur']:.2f} Euro)"
+        line += f" ({slot['reason']})"
+        lines.append(line)
     return "\n".join(lines) if lines else "noch kein Plan"
 
 
-def _scheduler_brief(state: PlanState) -> str:
-    """Build the scheduler brief from request, facts, and review notes."""
-    parts = [f"Request: {state.get('request', '')}"]
-    facts = state.get("analysis", [])
-    if facts:
-        parts.append("Price facts:\n" + "\n".join(f"- {fact}" for fact in facts))
-    verdict = state.get("verdict")
-    if verdict and verdict["notes"]:
-        notes = "\n".join(f"- {note}" for note in verdict["notes"])
-        parts.append(f"Previous review notes, fix every one:\n{notes}")
-    return "\n\n".join(parts)
+def _read_constraints(state: PlanState, node: str) -> HouseholdConstraints:
+    """Validate the state's constraints, failing loudly without them."""
+    raw = state.get("constraints")
+    if raw is None:
+        raise LifeplanError(f"{node} needs constraints")
+    try:
+        return HouseholdConstraints.model_validate(raw)
+    except ValidationError as exc:
+        raise LifeplanError(f"{node} needs constraints: {exc}") from exc
 
 
 def perceive_node(state: PlanState, router: ChatRouter) -> PlanState:
@@ -73,100 +81,100 @@ def perceive_node(state: PlanState, router: ChatRouter) -> PlanState:
 
 
 def analyst_node(state: PlanState, router: ChatRouter) -> PlanState:
-    """Collect price facts about the requested window."""
-    result = router.chat(
-        "analyst",
-        [
-            Message(
-                role="system",
-                content="List short price facts for the planning "
-                "request, one per line.",
-            ),
-            Message(role="user", content=state.get("request", "")),
-        ],
-        ANALYST_TOKENS,
-        LOW_EFFORT,
-    )
-    facts = [line.strip() for line in result.content.splitlines() if line.strip()]
+    """Extract price facts plus hard household constraints."""
+    analysis = analyze(state.get("request", ""), router)
+    attribution = _attributed(state, "analysis", analysis.model)
+    attribution["constraints"] = analysis.model
     return PlanState(
-        analysis=facts,
-        attribution=_attributed(state, "analysis", result.model),
-        audit=[audit_event("analyst", f"{len(facts)} facts")],
-    )
-
-
-def _parse_slots(content: str) -> list[Slot]:
-    """Parse the scheduler's JSON slot list, strictly."""
-    try:
-        raw = json.loads(content)
-    except ValueError as exc:
-        raise LlmError("scheduler returned invalid JSON") from exc
-    if not isinstance(raw, list):
-        raise LlmError("scheduler returned invalid JSON")
-    slots: list[Slot] = []
-    for item in raw:
-        if not isinstance(item, dict):
-            raise LlmError("scheduler returned invalid JSON")
-        values: dict[str, Any] = item
-        if not all(
-            key in values and isinstance(values[key], str) for key in _SLOT_KEYS
-        ):
-            raise LlmError("scheduler returned invalid JSON")
-        slots.append(
-            Slot(
-                device=values["device"],
-                start=values["start"],
-                end=values["end"],
-                reason=values["reason"],
+        analysis=analysis.facts,
+        constraints=analysis.constraints.model_dump(),
+        attribution=attribution,
+        audit=[
+            audit_event(
+                "analyst",
+                f"{len(analysis.facts)} facts, "
+                f"{len(analysis.constraints.devices)} devices",
             )
-        )
-    return slots
-
-
-def scheduler_node(state: PlanState, router: ChatRouter) -> PlanState:
-    """Draft the device schedule as a JSON slot list."""
-    result = router.chat(
-        "scheduler",
-        [
-            Message(
-                role="system",
-                content="Reply with a JSON list of schedule slots only. "
-                "Each slot has device, start, end, and reason strings.",
-            ),
-            Message(role="user", content=_scheduler_brief(state)),
         ],
-        SCHEDULER_TOKENS,
-        LOW_EFFORT,
     )
-    slots = _parse_slots(result.content)
+
+
+def scheduler_node(state: PlanState, price_loader: PriceLoader) -> PlanState:
+    """Place every device into its cheapest feasible hours."""
+    constraints = _read_constraints(state, "scheduler")
+    loaded: LoadedPrices = price_loader()
+    plan = optimize(constraints, loaded.bars)
+    schedule = [
+        Slot(
+            device=slot.device,
+            start=slot.start,
+            end=slot.end,
+            reason=slot.reason,
+            energy_kwh=slot.energy_kwh,
+            price_ct_kwh=slot.price_ct_kwh,
+            cost_eur=slot.cost_eur,
+        )
+        for slot in plan.slots
+    ]
+    prices = [
+        PriceBarState(hour=bar.hour, price_ct_kwh=bar.price_ct_kwh, source=bar.source)
+        for bar in loaded.bars
+    ]
     return PlanState(
-        schedule=slots,
-        attribution=_attributed(state, "schedule", result.model),
-        audit=[audit_event("scheduler", f"{len(slots)} slots")],
+        schedule=schedule,
+        unscheduled=plan.unscheduled,
+        total_cost_eur=plan.total_cost_eur,
+        prices=prices,
+        price_source=loaded.source,
+        attribution=_attributed(state, "schedule", DETERMINISTIC),
+        audit=[
+            audit_event(
+                "scheduler",
+                f"{len(schedule)} slots, "
+                f"{plan.total_cost_eur:.2f} Euro, "
+                f"{len(plan.unscheduled)} gaps",
+            )
+        ],
     )
 
 
 def explainer_node(state: PlanState, router: ChatRouter) -> PlanState:
-    """Narrate the draft schedule in plain words."""
-    brief = (
-        f"Request: {state.get('request', '')}\n\nSchedule:\n{_format_schedule(state)}"
+    """Narrate the priced schedule with citations and checks."""
+    constraints = HouseholdConstraints.model_validate(state.get("constraints", {}))
+    try:
+        slots = [
+            ScheduledSlot.model_validate(dict(slot))
+            for slot in state.get("schedule", [])
+        ]
+    except ValidationError as exc:
+        raise LifeplanError(f"explainer needs priced slots: {exc}") from exc
+    narration, model = narrate(
+        slots,
+        state.get("total_cost_eur", 0.0),
+        constraints,
+        state.get("unscheduled", []),
+        state.get("price_source", "unknown"),
+        router,
     )
-    result = router.chat(
-        "explainer",
-        [
-            Message(
-                role="system",
-                content="Explain the schedule simply, in the household's language.",
-            ),
-            Message(role="user", content=brief),
-        ],
-        EXPLAINER_TOKENS,
-        LOW_EFFORT,
-    )
+    citations = [
+        CitationState(
+            claim=citation.claim,
+            source=citation.source,
+            detail=citation.detail,
+        )
+        for citation in narration.citations
+    ]
     return PlanState(
-        narration=result.content,
-        attribution=_attributed(state, "narration", result.model),
-        audit=[audit_event("explainer", "narration written")],
+        narration=narration.text,
+        citations=citations,
+        violations=narration.violations,
+        attribution=_attributed(state, "narration", model),
+        audit=[
+            audit_event(
+                "explainer",
+                f"{len(citations)} citations, {len(narration.violations)} violations",
+            )
+        ],
     )
 
 
@@ -190,22 +198,34 @@ def _parse_verdict(content: str) -> CriticVerdict:
 
 def critic_node(state: PlanState, router: ChatRouter) -> PlanState:
     """Judge the draft, counting review cycles toward the cap."""
-    brief = (
-        f"Request: {state.get('request', '')}\n\n"
-        f"Schedule:\n{_format_schedule(state)}\n\n"
-        f"Narration: {state.get('narration', '')}"
-    )
+    parts = [
+        f"Request: {state.get('request', '')}",
+        f"Schedule:\n{_format_schedule(state)}",
+        f"Narration: {state.get('narration', '')}",
+    ]
+    if state.get("violations"):
+        lines = "\n".join(f"- {item}" for item in state["violations"])
+        parts.append(f"Faithfulness violations:\n{lines}")
+    if state.get("unscheduled"):
+        lines = "\n".join(f"- {item}" for item in state["unscheduled"])
+        parts.append(f"Unscheduled devices:\n{lines}")
     result = router.chat(
         "critic",
         [
             Message(
                 role="system",
-                content="Judge the draft schedule against the request. "
-                "Approve when every requested device has a slot and the "
-                "narration matches the schedule. Reply with JSON only: "
-                "approved boolean plus notes list of strings.",
+                content="Judge the draft narration against the computed "
+                "schedule. The schedule is final: it already places every "
+                "device into its cheapest feasible hours, so never veto "
+                "device times, prices, or costs. Approve when every "
+                "scheduled device appears with correct HH:MM times, every "
+                "cost matches, unscheduled devices are mentioned when "
+                "listed, and no violation stands. Veto only narration "
+                "defects, naming the exact broken sentence in notes. "
+                "Reply with JSON only: approved boolean plus notes list "
+                "of strings.",
             ),
-            Message(role="user", content=brief),
+            Message(role="user", content="\n\n".join(parts)),
         ],
         CRITIC_TOKENS,
         LOW_EFFORT,

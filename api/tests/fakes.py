@@ -1,5 +1,7 @@
 """Shared fakes for agent tests."""
 
+from strompilot.lifeplan.loaders import LoadedPrices
+from strompilot.lifeplan.schemas import DeviceConstraint, PriceBar
 from strompilot.llm.client import SPARK_MODEL
 from strompilot.llm.types import ChatResult, Message
 
@@ -19,6 +21,60 @@ def reply(
     )
 
 
+ANALYST_JSON = """{"facts": ["billig nachts"],
+"devices": [
+{"device": "Waschmaschine", "power_kw": 2.0, "duration_h": 2.0,
+"earliest": "00:00", "latest": "23:00", "shiftable": true}
+],
+"notes": ""}"""
+
+CLEAN_NARRATION = (
+    "Die Waschmaschine läuft von 02:00 bis 04:00 Uhr und kostet 0,60 €. "
+    "Die Gesamtkosten betragen 0,60 €."
+)
+
+
+def price_bars() -> list[PriceBar]:
+    """Test curve: night dip 02-04, midday dip, evening peak."""
+    prices = [30.0] * 24
+    prices[2] = 15.0
+    prices[3] = 15.0
+    prices[12] = 18.0
+    prices[13] = 18.0
+    prices[18] = 45.0
+    prices[19] = 45.0
+    return [
+        PriceBar(hour=hour, price_ct_kwh=price, source="test")
+        for hour, price in enumerate(prices)
+    ]
+
+
+def make_device(
+    name: str = "Waschmaschine",
+    power_kw: float = 2.0,
+    duration_h: float = 2.0,
+    earliest: str = "00:00",
+    latest: str = "23:00",
+    shiftable: bool = True,
+) -> DeviceConstraint:
+    """Build a device constraint with washer defaults."""
+    return DeviceConstraint(
+        device=name,
+        power_kw=power_kw,
+        duration_h=duration_h,
+        earliest=earliest,
+        latest=latest,
+        shiftable=shiftable,
+    )
+
+
+def stub_loader() -> LoadedPrices:
+    """Stub price loader over the shared test curve."""
+    return LoadedPrices(
+        bars=price_bars(), source="test", stale=False, attribution="test"
+    )
+
+
 class StubLeg:
     """Scripted model leg that records its calls."""
 
@@ -27,16 +83,19 @@ class StubLeg:
         self._script = list(script)
         self.calls: list[list[Message]] = []
         self.efforts: list[str | None] = []
+        self.temps: list[float | None] = []
 
     def chat(
         self,
         messages: list[Message],
         max_tokens: int,
         reasoning_effort: str | None = None,
+        temperature: float | None = None,
     ) -> ChatResult:
         del max_tokens
         self.calls.append(messages)
         self.efforts.append(reasoning_effort)
+        self.temps.append(temperature)
         if not self._script:
             raise AssertionError(f"no scripted reply left for {self.model}")
         next_up = self._script.pop(0)
@@ -52,6 +111,7 @@ class FakeRouter:
         self._scripts = {worker: list(script) for worker, script in scripts.items()}
         self.calls: list[str] = []
         self.efforts: list[str | None] = []
+        self.temps: list[float | None] = []
         self.prompts: list[str] = []
 
     def chat(
@@ -60,10 +120,12 @@ class FakeRouter:
         messages: list[Message],
         max_tokens: int,
         reasoning_effort: str | None = None,
+        temperature: float | None = None,
     ) -> ChatResult:
         del max_tokens
         self.calls.append(worker)
         self.efforts.append(reasoning_effort)
+        self.temps.append(temperature)
         self.prompts.append(
             "\n".join(f"{message.role}: {message.content}" for message in messages)
         )

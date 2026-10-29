@@ -6,7 +6,9 @@ from typing import Literal
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
-from .router import ChatRouter
+from strompilot.lifeplan.loaders import PriceLoader
+from strompilot.llm.types import ChatRouter
+
 from .state import PlanState
 from .workers import (
     analyst_node,
@@ -38,13 +40,13 @@ def route_next(state: PlanState) -> Literal["scheduler", "publish", "end"]:
 
 
 def build_graph(
-    router: ChatRouter,
+    router: ChatRouter, price_loader: PriceLoader
 ) -> CompiledStateGraph[PlanState, None, PlanState, PlanState]:
     """Compile the supervisor graph with one router for every worker."""
     graph = StateGraph(PlanState)
     graph.add_node("perceive", partial(perceive_node, router=router))
     graph.add_node("analyst", partial(analyst_node, router=router))
-    graph.add_node("scheduler", partial(scheduler_node, router=router))
+    graph.add_node("scheduler", partial(scheduler_node, price_loader=price_loader))
     graph.add_node("explainer", partial(explainer_node, router=router))
     graph.add_node("critic", partial(critic_node, router=router))
     graph.add_node("publish", publish_node)

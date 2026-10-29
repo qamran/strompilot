@@ -1,7 +1,6 @@
 """Model router: per-worker legs, per-call fallback, spend log."""
 
 from dataclasses import dataclass
-from typing import Protocol
 
 from strompilot.llm.client import (
     BASETEN_BASE_URL,
@@ -11,9 +10,17 @@ from strompilot.llm.client import (
     WONDER_MODEL,
     ChatClient,
 )
-from strompilot.llm.types import ChatResult, LlmError, Message
+from strompilot.llm.types import (
+    ChatLeg,
+    ChatResult,
+    ChatRouter,
+    LlmError,
+    Message,
+)
 
 from .guards import GuardError, cost_rail_hit, has_stall
+
+__all__ = ["ChatLeg", "ChatRouter", "ModelRouter", "SpendEntry"]
 
 # Standard-mode USD per 1M tokens, from the Meta pricing docs. The
 # Baseten leg has no pinned rate, so its entries record tokens only.
@@ -21,31 +28,6 @@ _PRICES = {
     SPARK_MODEL: (1.25, 4.25),
     WONDER_MODEL: (4.00, 20.00),
 }
-
-
-class ChatLeg(Protocol):
-    """One callable model leg, real or stub."""
-
-    model: str
-
-    def chat(
-        self,
-        messages: list[Message],
-        max_tokens: int,
-        reasoning_effort: str | None = ...,
-    ) -> ChatResult: ...
-
-
-class ChatRouter(Protocol):
-    """Per-worker chat entry point, real or fake."""
-
-    def chat(
-        self,
-        worker: str,
-        messages: list[Message],
-        max_tokens: int,
-        reasoning_effort: str | None = ...,
-    ) -> ChatResult: ...
 
 
 @dataclass(frozen=True)
@@ -92,11 +74,11 @@ class ModelRouter:
         spark = ChatClient(META_BASE_URL, meta_key, SPARK_MODEL)
         wonder = ChatClient(META_BASE_URL, meta_key, WONDER_MODEL)
         spark_open = ChatClient(BASETEN_BASE_URL, baseten_key, SPARK_OPEN_MODEL)
+        # The scheduler is deterministic since SP-05, so it owns no leg.
         return cls(
             {
                 "supervisor": (spark, None),
                 "analyst": (spark, None),
-                "scheduler": (spark, None),
                 "explainer": (spark_open, spark),
                 "critic": (wonder, spark),
             }
@@ -108,6 +90,7 @@ class ModelRouter:
         messages: list[Message],
         max_tokens: int,
         reasoning_effort: str | None = None,
+        temperature: float | None = None,
     ) -> ChatResult:
         """Run one worker call with fallback, rails, and spend logging."""
         if worker not in self._legs:
@@ -121,7 +104,7 @@ class ModelRouter:
         last_error: LlmError | None = None
         for leg in attempts:
             try:
-                result = leg.chat(messages, max_tokens, reasoning_effort)
+                result = leg.chat(messages, max_tokens, reasoning_effort, temperature)
                 break
             except LlmError as exc:
                 last_error = exc

@@ -34,6 +34,7 @@ class ChatClient:
         messages: list[Message],
         max_tokens: int,
         reasoning_effort: str | None = None,
+        temperature: float | None = None,
     ) -> ChatResult:
         """Send one chat completion, raising LlmError on any failure.
 
@@ -50,6 +51,8 @@ class ChatClient:
         }
         if reasoning_effort is not None:
             payload["reasoning_effort"] = reasoning_effort
+        if temperature is not None:
+            payload["temperature"] = temperature
         try:
             response = httpx.post(
                 f"{self._base_url}/chat/completions",

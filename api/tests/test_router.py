@@ -139,10 +139,9 @@ def test_from_keys_pins_production_assignments(
 
     monkeypatch.setattr(httpx, "post", fake_post)
     router = ModelRouter.from_keys("meta-key", "baseten-key")
-    for worker in ["supervisor", "analyst", "scheduler", "explainer", "critic"]:
+    for worker in ["supervisor", "analyst", "explainer", "critic"]:
         router.chat(worker, [Message(role="user", content="x")], 10)
     assert models == [
-        SPARK_MODEL,
         SPARK_MODEL,
         SPARK_MODEL,
         SPARK_OPEN_MODEL,
@@ -230,6 +229,20 @@ def test_router_forwards_reasoning_effort_to_both_legs() -> None:
     )
     assert open_leg.efforts == ["low"]
     assert spark.efforts == ["low"]
+
+
+def test_router_forwards_temperature_to_both_legs() -> None:
+    open_leg = StubLeg(SPARK_OPEN_MODEL, [LlmError("baseten down")])
+    spark = StubLeg(SPARK_MODEL, [reply("fallback text", SPARK_MODEL)])
+    router = make_router(spark, StubLeg(WONDER_MODEL, []), open_leg)
+    router.chat(
+        "explainer",
+        [Message(role="user", content="x")],
+        500,
+        temperature=0.0,
+    )
+    assert open_leg.temps == [0.0]
+    assert spark.temps == [0.0]
 
 
 def test_cost_rail_trips_after_logging_the_call() -> None:

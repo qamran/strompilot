@@ -2,7 +2,7 @@
 
 import pytest
 
-from strompilot.agents.state import CriticVerdict, PlanState, Slot
+from strompilot.agents.state import PlanState, Slot
 from strompilot.agents.workers import (
     analyst_node,
     critic_node,
@@ -11,9 +11,17 @@ from strompilot.agents.workers import (
     publish_node,
     scheduler_node,
 )
+from strompilot.lifeplan.errors import LifeplanError
+from strompilot.lifeplan.schemas import HouseholdConstraints
 from strompilot.llm.client import SPARK_MODEL, SPARK_OPEN_MODEL
 from strompilot.llm.types import LlmError
-from tests.fakes import FakeRouter, reply
+from tests.fakes import (
+    ANALYST_JSON,
+    FakeRouter,
+    make_device,
+    reply,
+    stub_loader,
+)
 
 
 def test_perceive_marks_planning_intent() -> None:
@@ -30,40 +38,53 @@ def test_perceive_marks_other_intent() -> None:
     assert update["intent"] == "other"
 
 
-def test_analyst_collects_facts() -> None:
-    router = FakeRouter({"analyst": [reply("billig nachts\n\nteuer abends\n")]})
+def test_analyst_extracts_facts_and_constraints() -> None:
+    router = FakeRouter({"analyst": [reply(ANALYST_JSON)]})
     update = analyst_node(PlanState(request="plane"), router)
-    assert update["analysis"] == ["billig nachts", "teuer abends"]
-    assert update["attribution"] == {"analysis": SPARK_MODEL}
+    assert update["analysis"] == ["billig nachts"]
+    devices = update["constraints"]["devices"]
+    assert [device["device"] for device in devices] == ["Waschmaschine"]
+    assert update["attribution"] == {
+        "analysis": SPARK_MODEL,
+        "constraints": SPARK_MODEL,
+    }
 
 
-def test_scheduler_parses_slots() -> None:
-    body = (
-        '[{"device": "Waschmaschine", "start": "02:00", '
-        '"end": "04:00", "reason": "billig"}]'
+def test_analyst_error_propagates() -> None:
+    router = FakeRouter({"analyst": [reply("nein"), reply("nein")]})
+    with pytest.raises(LlmError, match="extraction failed"):
+        analyst_node(PlanState(request="plane"), router)
+
+
+def test_scheduler_optimizes_deterministically() -> None:
+    constraints = HouseholdConstraints(devices=[make_device()]).model_dump()
+    update = scheduler_node(
+        PlanState(request="plane", constraints=constraints), stub_loader
     )
-    router = FakeRouter({"scheduler": [reply(body)]})
-    update = scheduler_node(PlanState(request="plane"), router)
-    assert update["schedule"] == [
-        {
-            "device": "Waschmaschine",
-            "start": "02:00",
-            "end": "04:00",
-            "reason": "billig",
-        }
-    ]
+    (slot,) = update["schedule"]
+    assert (slot["start"], slot["end"]) == ("02:00", "04:00")
+    assert slot["cost_eur"] == 0.60
+    assert update["total_cost_eur"] == 0.60
+    assert update["unscheduled"] == []
+    assert update["price_source"] == "test"
+    assert len(update["prices"]) == 24
+    assert update["attribution"] == {"schedule": "deterministic"}
 
 
-def test_scheduler_rejects_invalid_json() -> None:
-    router = FakeRouter({"scheduler": [reply("kein json")]})
-    with pytest.raises(LlmError, match="invalid"):
-        scheduler_node(PlanState(request="plane"), router)
+def test_scheduler_rejects_missing_constraints() -> None:
+    with pytest.raises(LifeplanError, match="constraints"):
+        scheduler_node(PlanState(request="plane"), stub_loader)
 
 
-def test_scheduler_rejects_bad_slots() -> None:
-    router = FakeRouter({"scheduler": [reply('[{"device": "x"}]')]})
-    with pytest.raises(LlmError, match="invalid"):
-        scheduler_node(PlanState(request="plane"), router)
+def test_scheduler_marks_unfittable_devices() -> None:
+    device = make_device(duration_h=5.0, earliest="18:00", latest="20:00")
+    constraints = HouseholdConstraints(devices=[device]).model_dump()
+    update = scheduler_node(
+        PlanState(request="plane", constraints=constraints), stub_loader
+    )
+    assert update["schedule"] == []
+    assert len(update["unscheduled"]) == 1
+    assert "Waschmaschine" in update["unscheduled"][0]
 
 
 def test_explainer_writes_narration() -> None:
@@ -71,6 +92,25 @@ def test_explainer_writes_narration() -> None:
     update = explainer_node(PlanState(request="plane"), router)
     assert update["narration"] == "Wasche nachts."
     assert update["attribution"] == {"narration": SPARK_OPEN_MODEL}
+    assert update["violations"] == []
+    assert len(update["citations"]) >= 1
+
+
+def test_explainer_rejects_unpriced_slots() -> None:
+    router = FakeRouter({"explainer": [reply("text")]})
+    state = PlanState(
+        request="plane",
+        schedule=[
+            Slot(
+                device="Waschmaschine",
+                start="02:00",
+                end="04:00",
+                reason="billig",
+            )
+        ],
+    )
+    with pytest.raises(LifeplanError, match="priced"):
+        explainer_node(state, router)
 
 
 def test_critic_approves_and_counts() -> None:
@@ -110,8 +150,7 @@ def test_workers_pin_reasoning_effort() -> None:
     router = FakeRouter(
         {
             "supervisor": [reply("plan")],
-            "analyst": [reply("facts")],
-            "scheduler": [reply("[]")],
+            "analyst": [reply(ANALYST_JSON)],
             "explainer": [reply("text")],
             "critic": [reply('{"approved": true, "notes": []}')],
         }
@@ -119,34 +158,17 @@ def test_workers_pin_reasoning_effort() -> None:
     state = PlanState(request="plane")
     perceive_node(state, router)
     analyst_node(state, router)
-    scheduler_node(state, router)
+    constraints = HouseholdConstraints(devices=[make_device()]).model_dump()
+    scheduler_node(PlanState(request="plane", constraints=constraints), stub_loader)
     explainer_node(state, router)
     critic_node(state, router)
-    assert router.calls == [
-        "supervisor",
-        "analyst",
-        "scheduler",
-        "explainer",
-        "critic",
-    ]
-    assert router.efforts == ["minimal", "low", "low", "low", "low"]
-
-
-def test_scheduler_sees_facts_and_review_notes() -> None:
-    router = FakeRouter({"scheduler": [reply("[]")]})
-    state = PlanState(
-        request="plane",
-        analysis=["billig nachts"],
-        verdict=CriticVerdict(approved=False, notes=["beleg fehlt"]),
-    )
-    scheduler_node(state, router)
-    (prompt,) = router.prompts
-    assert "billig nachts" in prompt
-    assert "beleg fehlt" in prompt
+    assert router.calls == ["supervisor", "analyst", "explainer", "critic"]
+    assert router.efforts == ["minimal", "low", "low", "low"]
 
 
 def test_explainer_sees_schedule() -> None:
-    router = FakeRouter({"explainer": [reply("text")]})
+    text = "Die Waschmaschine läuft von 02:00 bis 04:00 Uhr."
+    router = FakeRouter({"explainer": [reply(text)]})
     state = PlanState(
         request="plane",
         schedule=[
@@ -155,6 +177,9 @@ def test_explainer_sees_schedule() -> None:
                 start="02:00",
                 end="04:00",
                 reason="billig",
+                energy_kwh=4.0,
+                price_ct_kwh=15.0,
+                cost_eur=0.60,
             )
         ],
     )
@@ -182,6 +207,27 @@ def test_critic_sees_schedule_and_narration() -> None:
     (prompt,) = router.prompts
     assert "Waschmaschine" in prompt
     assert "Wasche nachts." in prompt
+
+
+def test_critic_treats_schedule_as_final() -> None:
+    router = FakeRouter({"critic": [reply('{"approved": true, "notes": []}')]})
+    critic_node(PlanState(request="plane", narration="text"), router)
+    (prompt,) = router.prompts
+    assert "final" in prompt
+
+
+def test_critic_sees_violations_and_gaps() -> None:
+    router = FakeRouter({"critic": [reply('{"approved": true, "notes": []}')]})
+    state = PlanState(
+        request="plane",
+        narration="text",
+        violations=["Uhrzeit 09:00 ohne Planbeleg"],
+        unscheduled=["E-Auto: kein Fenster"],
+    )
+    critic_node(state, router)
+    (prompt,) = router.prompts
+    assert "09:00" in prompt
+    assert "kein Fenster" in prompt
 
 
 def test_publish_needs_approval() -> None:

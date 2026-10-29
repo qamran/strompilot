@@ -8,7 +8,7 @@ from .client import (
     WONDER_MODEL,
     ChatClient,
 )
-from .types import ChatResult, LlmError, Message
+from .types import ChatLeg, ChatResult, ChatRouter, LlmError, Message
 
 __all__ = [
     "BASETEN_BASE_URL",
@@ -17,7 +17,9 @@ __all__ = [
     "SPARK_OPEN_MODEL",
     "WONDER_MODEL",
     "ChatClient",
+    "ChatLeg",
     "ChatResult",
+    "ChatRouter",
     "LlmError",
     "Message",
 ]
