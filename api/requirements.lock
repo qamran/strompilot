@@ -87,6 +87,8 @@ typing-inspection==0.4.4
     # via
     #   fastapi
     #   pydantic
+tzdata==2026.6
+    # via strompilot
 uvicorn==0.54.0
     # via strompilot
 watchfiles==1.3.0

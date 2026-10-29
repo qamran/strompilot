@@ -13,6 +13,7 @@ dependencies = [
     "pydantic",
     "python-dotenv",
     "httpx",
+    "tzdata",
 ]
 
 [project.optional-dependencies]

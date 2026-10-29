@@ -25,6 +25,9 @@ dist/
 .DS_Store
 Thumbs.db
 
+# Runtime data
+data/
+
 # Local scratch
 .superpowers/
 .pytest_cache/

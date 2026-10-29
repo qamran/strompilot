@@ -50,6 +50,11 @@ after changing dependencies:
 uv pip compile api/requirements.in -o api/requirements.lock
 ```
 
+Price data caches under `data/prices/` (gitignored). Override the location
+with the `PRICE_CACHE_DIR` environment variable. Refresh the recorded test
+fixtures with `.venv/Scripts/python scripts/record_price_fixtures.py`, which
+makes one live call per source.
+
 ## Run the API
 
 ```sh
