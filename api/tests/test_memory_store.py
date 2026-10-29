@@ -130,3 +130,18 @@ def test_connections_close_after_use(tmp_path: Path) -> None:
         conn.execute("SELECT 1")
     with pytest.raises(sqlite3.ProgrammingError):
         conn.execute("SELECT 1")
+
+
+def test_list_households_covers_both_tables(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "memory.db")
+    assert store.list_households() == []
+    store.set_preference("hh2", "devices", [])
+    store.add_episode("hh1", "note", "text")
+    assert store.list_households() == ["hh1", "hh2"]
+
+
+def test_forget_household_removes_it_from_listing(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "memory.db")
+    store.set_preference("hh1", "devices", [])
+    store.forget_household("hh1")
+    assert store.list_households() == []

@@ -20,6 +20,9 @@ from strompilot.agents.router import ModelRouter
 from strompilot.agents.state import PlanState
 from strompilot.agents.supervisor import build_graph
 from strompilot.contract import CONTRACT_VERSION, HealthResponse
+from strompilot.flexalarm.loop import run_once
+from strompilot.flexalarm.models import Alert, WatchReport
+from strompilot.flexalarm.store import AlertStore
 from strompilot.lifeplan.loaders import load_price_bars
 from strompilot.memory.models import Episode, MemoryError, Preference
 from strompilot.memory.store import MemoryStore
@@ -298,3 +301,56 @@ def decide_thread(
         _thread_config(thread_id),
     )
     return _read_status(thread_id, graph)
+
+
+class AlertsResponse(BaseModel):
+    """One household's alerts, oldest first."""
+
+    household_id: str
+    alerts: list[Alert]
+
+
+def get_watch_router() -> ModelRouter:
+    """Build the production router for one watcher pass."""
+    meta_key = os.environ.get("META_API_KEY", "")
+    baseten_key = os.environ.get("BASETEN_API_KEY", "")
+    if not meta_key or not baseten_key:
+        raise HTTPException(status_code=500, detail="model keys missing")
+    return ModelRouter.from_keys(meta_key, baseten_key)
+
+
+@app.post("/flexalarm/watch", response_model=WatchReport)
+def trigger_watch(
+    household_id: str,
+    date: date | None = None,
+    router: ModelRouter = Depends(get_watch_router),
+) -> WatchReport:
+    """Run one watcher pass over one household and price day."""
+    now = datetime.now(BERLIN)
+    target = date or now.date() + timedelta(days=1)
+    try:
+        series = get_day_ahead_prices(target, _cache_dir(), datetime.now(UTC))
+        return run_once(
+            household_id=household_id,
+            series=series,
+            memory=_store(),
+            alerts=AlertStore(_memory_db()),
+            router=router,
+            senders=None,
+            now=now,
+        )
+    except MemoryError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/flexalarm/alerts", response_model=AlertsResponse)
+def read_alerts(
+    household_id: str,
+    limit: int = Query(default=50, ge=1, le=200),
+) -> AlertsResponse:
+    """List one household's alerts, oldest first."""
+    try:
+        alerts = AlertStore(_memory_db()).list_alerts(household_id, limit=limit)
+    except MemoryError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return AlertsResponse(household_id=household_id, alerts=alerts)

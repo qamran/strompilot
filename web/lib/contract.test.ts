@@ -3,14 +3,14 @@ import { CONTRACT_VERSION, parseHealthResponse } from "./contract";
 
 describe("API contract stub", () => {
   it("pins the contract version shared with the backend", () => {
-    expect(CONTRACT_VERSION).toBe("0.4.0");
+    expect(CONTRACT_VERSION).toBe("0.5.0");
   });
 
   it("accepts a recorded /health payload", () => {
     const payload = {
       status: "ok",
       service: "strompilot-api",
-      contract_version: "0.4.0",
+      contract_version: "0.5.0",
     };
     expect(parseHealthResponse(payload)).toEqual(payload);
   });

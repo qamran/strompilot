@@ -1,11 +1,14 @@
 """Shared fakes for agent tests."""
 
+from datetime import date, datetime, timedelta
+
 from langchain_core.runnables import RunnableConfig
 
 from strompilot.lifeplan.loaders import LoadedPrices
 from strompilot.lifeplan.schemas import DeviceConstraint, PriceBar
 from strompilot.llm.client import SPARK_MODEL
 from strompilot.llm.types import ChatResult, Message
+from strompilot.prices.models import BERLIN, PricePoint, PriceSeries
 
 
 def reply(
@@ -80,6 +83,22 @@ def stub_loader() -> LoadedPrices:
 def thread_config(thread_id: str) -> RunnableConfig:
     """Build a typed thread config for one thread."""
     return {"configurable": {"thread_id": thread_id}}
+
+
+def day_series(prices_ct: list[float], day: date | None = None) -> PriceSeries:
+    """Build one Berlin day of hourly prices from ct/kWh values."""
+    target = day or date(2026, 6, 1)
+    points = []
+    for hour, ct in enumerate(prices_ct):
+        start = datetime(target.year, target.month, target.day, hour, tzinfo=BERLIN)
+        end = start + timedelta(hours=1)
+        points.append(PricePoint(start=start, end=end, eur_per_mwh=round(ct * 10, 2)))
+    return PriceSeries(
+        date=target,
+        source="test",
+        attribution="test",
+        prices=points,
+    )
 
 
 class StubLeg:

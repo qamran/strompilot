@@ -93,6 +93,16 @@ class MemoryStore:
             ).fetchone()
         return json.loads(row[0]) if row else None
 
+    def list_households(self) -> list[str]:
+        """List every household id known to either table, ordered."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT household_id FROM preferences"
+                " UNION SELECT household_id FROM episodes"
+                " ORDER BY household_id"
+            ).fetchall()
+        return [str(row[0]) for row in rows]
+
     def delete_preference(self, household_id: str, key: str) -> bool:
         """Delete one preference, reporting whether it existed."""
         household_id = _require("household_id", household_id)

@@ -1,6 +1,6 @@
 /** Typed API contract stub mirroring api/strompilot/contract.py. */
 
-export const CONTRACT_VERSION = "0.4.0";
+export const CONTRACT_VERSION = "0.5.0";
 
 export interface HealthResponse {
   status: string;

@@ -4,7 +4,7 @@ from strompilot.contract import CONTRACT_VERSION, HealthResponse
 
 
 def test_contract_version_is_pinned() -> None:
-    assert CONTRACT_VERSION == "0.4.0"
+    assert CONTRACT_VERSION == "0.5.0"
 
 
 def test_health_response_schema_round_trip() -> None:

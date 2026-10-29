@@ -82,6 +82,7 @@ class ModelRouter:
                 "analyst": (spark, None),
                 "explainer": (spark_open, spark),
                 "critic": (wonder, spark),
+                "watcher": (spark_open, spark),
             }
         )
 
