@@ -1,19 +1,33 @@
 """Strompilot FastAPI application."""
 
 import os
-from datetime import UTC, date, datetime
+from collections.abc import Iterator
+from datetime import UTC, date, datetime, timedelta
+from functools import partial
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from fastapi import FastAPI, HTTPException, Query
+from dotenv import load_dotenv
+from fastapi import Depends, FastAPI, HTTPException, Query
+from langchain_core.runnables import RunnableConfig
+from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.graph.state import CompiledStateGraph
+from langgraph.types import Command
 from pydantic import BaseModel
 
+from strompilot.agents.router import ModelRouter
+from strompilot.agents.state import PlanState
+from strompilot.agents.supervisor import build_graph
 from strompilot.contract import CONTRACT_VERSION, HealthResponse
+from strompilot.lifeplan.loaders import load_price_bars
 from strompilot.memory.models import Episode, MemoryError, Preference
 from strompilot.memory.store import MemoryStore
-from strompilot.prices.models import PriceSeries
+from strompilot.prices.models import BERLIN, PriceSeries
 from strompilot.prices.service import get_day_ahead_prices
+from strompilot.tariff.defaults import DEFAULTS
+
+load_dotenv()
 
 app = FastAPI(title="Strompilot API", version="0.1.0")
 
@@ -162,3 +176,125 @@ def forget_household(household_id: str) -> dict[str, bool]:
     except MemoryError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {"forgotten": True}
+
+
+class ApprovalReview(BaseModel):
+    """The paused plan awaiting a human decision."""
+
+    type: str
+    schedule: list[dict[str, Any]]
+    total_cost_eur: float
+    narration: str
+
+
+class ApprovalStatus(BaseModel):
+    """One thread's approval state with its review or outcome."""
+
+    thread_id: str
+    status: str
+    published: bool = False
+    review: ApprovalReview | None = None
+    error: str | None = None
+
+
+class DecisionBody(BaseModel):
+    """Human approval decision."""
+
+    approved: bool
+
+
+def _threads_db() -> Path:
+    """Return the thread database path, honoring THREADS_DB."""
+    override = os.environ.get("THREADS_DB")
+    if override:
+        return Path(override)
+    return Path(__file__).resolve().parent.parent.parent / "data" / "threads.db"
+
+
+def get_approval_graph() -> Iterator[
+    CompiledStateGraph[PlanState, None, PlanState, PlanState]
+]:
+    """Yield one checkpointed supervisor graph per request."""
+    meta_key = os.environ.get("META_API_KEY", "")
+    baseten_key = os.environ.get("BASETEN_API_KEY", "")
+    if not meta_key or not baseten_key:
+        raise HTTPException(status_code=500, detail="model keys missing")
+    router = ModelRouter.from_keys(meta_key, baseten_key)
+    now = datetime.now(BERLIN)
+    loader = partial(
+        load_price_bars,
+        now.date() + timedelta(days=1),
+        _cache_dir(),
+        datetime.now(UTC),
+        DEFAULTS,
+    )
+    with SqliteSaver.from_conn_string(str(_threads_db())) as saver:
+        yield build_graph(router, loader, checkpointer=saver)
+
+
+def _thread_config(thread_id: str) -> RunnableConfig:
+    """Build the LangGraph config for one thread."""
+    return {"configurable": {"thread_id": thread_id}}
+
+
+def _read_status(
+    thread_id: str,
+    graph: CompiledStateGraph[PlanState, None, PlanState, PlanState],
+) -> ApprovalStatus:
+    """Derive one thread's approval status from its checkpoint."""
+    state = graph.get_state(_thread_config(thread_id))
+    if not state.values:
+        raise HTTPException(status_code=404, detail="thread not found")
+    for task in state.tasks:
+        for found in task.interrupts:
+            review = found.value
+            return ApprovalStatus(
+                thread_id=thread_id,
+                status="paused",
+                review=ApprovalReview(
+                    type=str(review.get("type", "plan_approval")),
+                    schedule=list(review.get("schedule", [])),
+                    total_cost_eur=float(review.get("total_cost_eur", 0.0)),
+                    narration=str(review.get("narration", "")),
+                ),
+            )
+    values = state.values
+    if values.get("published") is True:
+        return ApprovalStatus(thread_id=thread_id, status="published", published=True)
+    if values.get("error"):
+        return ApprovalStatus(
+            thread_id=thread_id, status="blocked", error=str(values["error"])
+        )
+    if not state.tasks:
+        return ApprovalStatus(thread_id=thread_id, status="done")
+    return ApprovalStatus(thread_id=thread_id, status="running")
+
+
+@app.get("/approvals/threads/{thread_id}", response_model=ApprovalStatus)
+def read_thread(
+    thread_id: str,
+    graph: CompiledStateGraph[PlanState, None, PlanState, PlanState] = Depends(
+        get_approval_graph
+    ),
+) -> ApprovalStatus:
+    """Report one thread's approval state."""
+    return _read_status(thread_id, graph)
+
+
+@app.post("/approvals/threads/{thread_id}/decide", response_model=ApprovalStatus)
+def decide_thread(
+    thread_id: str,
+    body: DecisionBody,
+    graph: CompiledStateGraph[PlanState, None, PlanState, PlanState] = Depends(
+        get_approval_graph
+    ),
+) -> ApprovalStatus:
+    """Resume one paused thread with a human decision."""
+    current = _read_status(thread_id, graph)
+    if current.status != "paused":
+        raise HTTPException(status_code=409, detail="thread is not awaiting approval")
+    graph.invoke(
+        Command(resume={"approved": body.approved}),
+        _thread_config(thread_id),
+    )
+    return _read_status(thread_id, graph)

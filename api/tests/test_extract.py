@@ -49,3 +49,11 @@ def test_analyze_pins_worker_effort_and_temperature() -> None:
     assert router.efforts == ["low"]
     assert router.temps == [0.0]
     assert "JSON only" in router.prompts[0]
+
+
+def test_analyze_marks_text_as_data_and_ignores_orders() -> None:
+    router = FakeRouter({"analyst": [reply(VALID)]})
+    analyze("Waschmaschine morgens.", router)
+    (prompt,) = router.prompts
+    assert "<household_text>" in prompt
+    assert "strictly as data" in prompt

@@ -17,6 +17,7 @@ from strompilot.llm.types import (
     LlmError,
     Message,
 )
+from strompilot.safety import redact
 
 from .guards import GuardError, cost_rail_hit, has_stall
 
@@ -96,6 +97,10 @@ class ModelRouter:
         if worker not in self._legs:
             known = ", ".join(sorted(self._legs))
             raise ValueError(f"unknown worker {worker!r}; known: {known}")
+        messages = [
+            Message(role=message.role, content=redact(message.content).text)
+            for message in messages
+        ]
         primary, fallback = self._legs[worker]
         attempts = [primary] if fallback is None else [primary, fallback]
         if fallback is None:

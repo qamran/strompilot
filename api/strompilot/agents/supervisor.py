@@ -13,6 +13,7 @@ from strompilot.llm.types import ChatRouter
 from .state import PlanState
 from .workers import (
     analyst_node,
+    approve_node,
     critic_node,
     explainer_node,
     perceive_node,
@@ -53,6 +54,11 @@ def build_graph(
     graph.add_node("explainer", partial(explainer_node, router=router))
     graph.add_node("critic", partial(critic_node, router=router))
     graph.add_node("publish", publish_node)
+    publish_target = "publish"
+    if checkpointer is not None:
+        graph.add_node("approve", approve_node)
+        graph.add_edge("approve", "publish")
+        publish_target = "approve"
     graph.add_edge(START, "perceive")
     graph.add_conditional_edges(
         "perceive", route_perceive, {"analyst": "analyst", "end": END}
@@ -63,7 +69,7 @@ def build_graph(
     graph.add_conditional_edges(
         "critic",
         route_next,
-        {"scheduler": "scheduler", "publish": "publish", "end": END},
+        {"scheduler": "scheduler", "publish": publish_target, "end": END},
     )
     graph.add_edge("publish", END)
     return graph.compile(checkpointer=checkpointer)

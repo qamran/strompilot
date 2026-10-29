@@ -245,6 +245,20 @@ def test_router_forwards_temperature_to_both_legs() -> None:
     assert spark.temps == [0.0]
 
 
+def test_router_strips_personal_data_before_legs() -> None:
+    spark = StubLeg(SPARK_MODEL, [reply("ok")])
+    router = make_router(
+        spark, StubLeg(WONDER_MODEL, []), StubLeg(SPARK_OPEN_MODEL, [])
+    )
+    router.chat(
+        "analyst",
+        [Message(role="user", content="Mail max@example.de, bitte planen")],
+        500,
+    )
+    (sent,) = spark.calls
+    assert sent[0].content == "Mail [E-Mail entfernt], bitte planen"
+
+
 def test_cost_rail_trips_after_logging_the_call() -> None:
     spark = StubLeg(SPARK_MODEL, [reply("big", SPARK_MODEL, 300_000, 0)])
     router = make_router(

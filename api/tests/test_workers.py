@@ -38,6 +38,13 @@ def test_perceive_marks_other_intent() -> None:
     assert update["intent"] == "other"
 
 
+def test_perceive_quotes_request() -> None:
+    router = FakeRouter({"supervisor": [reply("plan")]})
+    perceive_node(PlanState(request="plane"), router)
+    (prompt,) = router.prompts
+    assert "<household_text>" in prompt
+
+
 def test_analyst_extracts_facts_and_constraints() -> None:
     router = FakeRouter({"analyst": [reply(ANALYST_JSON)]})
     update = analyst_node(PlanState(request="plane"), router)
@@ -207,6 +214,7 @@ def test_critic_sees_schedule_and_narration() -> None:
     (prompt,) = router.prompts
     assert "Waschmaschine" in prompt
     assert "Wasche nachts." in prompt
+    assert "<household_text>" in prompt
 
 
 def test_critic_treats_schedule_as_final() -> None:

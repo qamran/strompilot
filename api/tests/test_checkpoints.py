@@ -2,7 +2,6 @@
 
 from pathlib import Path
 
-from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 from strompilot.agents.supervisor import build_graph
@@ -12,13 +11,9 @@ from tests.fakes import (
     FakeRouter,
     reply,
     stub_loader,
+    thread_config,
 )
 from tests.test_graph import APPROVE
-
-
-def _config(thread_id: str) -> RunnableConfig:
-    """Build a typed thread config for one thread."""
-    return {"configurable": {"thread_id": thread_id}}
 
 
 def make_router() -> FakeRouter:
@@ -37,7 +32,7 @@ def make_router() -> FakeRouter:
 def test_run_persists_thread_state(tmp_path: Path) -> None:
     with SqliteSaver.from_conn_string(str(tmp_path / "threads.db")) as saver:
         graph = build_graph(make_router(), stub_loader, checkpointer=saver)
-        config = _config("t1")
+        config = thread_config("t1")
         final = graph.invoke(
             {"request": "plane meinen Tag", "approval": "approved"}, config
         )
@@ -54,11 +49,11 @@ def test_threads_survive_saver_reopen(tmp_path: Path) -> None:
         graph = build_graph(make_router(), stub_loader, checkpointer=saver)
         graph.invoke(
             {"request": "plane meinen Tag", "approval": "approved"},
-            _config("t1"),
+            thread_config("t1"),
         )
     with SqliteSaver.from_conn_string(path) as reopened:
         graph = build_graph(make_router(), stub_loader, checkpointer=reopened)
-        state = graph.get_state(_config("t1"))
+        state = graph.get_state(thread_config("t1"))
         assert state.values["published"] is True
         assert state.values["schedule"][0]["start"] == "02:00"
 
@@ -68,7 +63,7 @@ def test_threads_stay_isolated(tmp_path: Path) -> None:
         graph = build_graph(make_router(), stub_loader, checkpointer=saver)
         graph.invoke(
             {"request": "plane meinen Tag", "approval": "approved"},
-            _config("t1"),
+            thread_config("t1"),
         )
-        other = graph.get_state(_config("t2"))
+        other = graph.get_state(thread_config("t2"))
         assert "published" not in other.values

@@ -9,6 +9,7 @@ from strompilot.llm.client import (
     ChatClient,
 )
 from strompilot.llm.types import LlmError, Message
+from strompilot.safety import redact
 
 # Generous ceiling: the model reasons before answering, and a cut-off
 # reply would leave content empty. Equal fallback scores keep BM25 order
@@ -32,6 +33,7 @@ class BasetenClient:
         configured. Any remaining failure degrades to equal zeros,
         which keeps BM25 order because the rerank sort is stable.
         """
+        query = redact(query).text
         numbered = "\n".join(f"{n}: {text}" for n, text in enumerate(texts))
         messages = [
             Message(

@@ -1,5 +1,7 @@
 """Shared fakes for agent tests."""
 
+from langchain_core.runnables import RunnableConfig
+
 from strompilot.lifeplan.loaders import LoadedPrices
 from strompilot.lifeplan.schemas import DeviceConstraint, PriceBar
 from strompilot.llm.client import SPARK_MODEL
@@ -73,6 +75,11 @@ def stub_loader() -> LoadedPrices:
     return LoadedPrices(
         bars=price_bars(), source="test", stale=False, attribution="test"
     )
+
+
+def thread_config(thread_id: str) -> RunnableConfig:
+    """Build a typed thread config for one thread."""
+    return {"configurable": {"thread_id": thread_id}}
 
 
 class StubLeg:

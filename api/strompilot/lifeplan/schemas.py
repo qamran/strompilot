@@ -3,12 +3,13 @@
 from pydantic import BaseModel, Field, field_validator
 
 _TIME_RE = r"^([01]\d|2[0-3]):([0-5]\d)$"
+_DEVICE_RE = r"^[A-Za-z0-9][A-Za-z0-9\-]*$"
 
 
 class DeviceConstraint(BaseModel):
     """One shiftable or fixed device with its running window."""
 
-    device: str = Field(min_length=1)
+    device: str = Field(min_length=1, max_length=32, pattern=_DEVICE_RE)
 
     @field_validator("device")
     @classmethod

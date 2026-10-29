@@ -143,6 +143,35 @@ def test_rerank_returns_zeros_when_fallback_fails(
     assert client.rerank_scores("frage", ["eins", "zwei"]) == [0.0, 0.0]
 
 
+def test_rerank_strips_personal_data_from_query(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self) -> dict[str, object]:
+            return {"choices": [{"message": {"content": "0: 9"}}]}
+
+    def fake_post(
+        url: str, headers: dict[str, str], json: dict[str, object], timeout: float
+    ) -> FakeResponse:
+        del url, headers, timeout
+        captured["messages"] = json["messages"]
+        return FakeResponse()
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    client = BasetenClient(api_key="test-key")
+    client.rerank_scores("Tarif an max@example.de?", ["text"])
+    messages = captured["messages"]
+    assert isinstance(messages, list)
+    assert "max@example.de" not in str(messages)
+    assert "[E-Mail entfernt]" in str(messages)
+
+
 def test_baseten_client_falls_back_on_garbage() -> None:
     client = BasetenClient(api_key="test-key")
     scores = client._parse_scores("keine zahlen hier", 3)

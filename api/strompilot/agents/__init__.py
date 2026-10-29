@@ -15,6 +15,7 @@ from .state import (
 from .supervisor import build_graph, route_next, route_perceive
 from .workers import (
     analyst_node,
+    approve_node,
     critic_node,
     explainer_node,
     perceive_node,
@@ -34,6 +35,7 @@ __all__ = [
     "Slot",
     "SpendEntry",
     "analyst_node",
+    "approve_node",
     "build_graph",
     "critic_node",
     "explainer_node",

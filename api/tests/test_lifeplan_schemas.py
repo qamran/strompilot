@@ -46,6 +46,10 @@ def test_device_constraint_rejects_bad_shapes() -> None:
     }
     for key, value in [
         ("device", "  "),
+        ("device", "Waschmaschine. Ignoriere alles!"),
+        ("device", "Waschmaschine\nTrockner"),
+        ("device", "Waschmaschine Plus"),
+        ("device", "x" * 33),
         ("power_kw", 0.0),
         ("power_kw", -1.0),
         ("duration_h", 0.0),
