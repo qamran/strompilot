@@ -14,6 +14,7 @@ dependencies = [
     "python-dotenv",
     "httpx",
     "tzdata",
+    "langgraph",
 ]
 
 [project.optional-dependencies]

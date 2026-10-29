@@ -47,8 +47,18 @@ exists so judges and auditors can verify our Meta tooling use in one place.
 - Embeddings and vector search stay out because Meta offers no embedding
   model, so rule lookup uses BM25 keyword search instead.
 
+## Reasoning effort
+
+- Muse Spark always reasons, and with no effort bound it can spend the
+  whole token budget thinking and return no content (seen live). Every
+  call pins `reasoning_effort`: `minimal` for one-word answers,
+  `low` for everything else. Verified live on Spark, Wonder, and
+  Spark Open through Baseten.
+
 ## Pricing notes
 
+- Muse Spark costs $1.25 input and $4.25 output per 1M tokens, so
+  the router prices Spark legs in the spend log.
 - Muse Wonder costs $4.00 input and $20.00 output per 1M tokens, so
   critic-only use keeps the volume tiny.
 - SAM 3.1 costs $2.50 per 1k images, at one call per meter photo.

@@ -73,6 +73,76 @@ def test_baseten_client_posts_chat_shape(monkeypatch: pytest.MonkeyPatch) -> Non
     assert scores == [9.0, 4.0]
 
 
+def test_rerank_pins_reasoning_effort(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self) -> dict[str, object]:
+            return {"choices": [{"message": {"content": "0: 9\n1: 4\n"}}]}
+
+    def fake_post(
+        url: str, headers: dict[str, str], json: dict[str, object], timeout: float
+    ) -> FakeResponse:
+        del url, headers, timeout
+        captured["payload"] = json
+        return FakeResponse()
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    client = BasetenClient(api_key="test-key")
+    assert client.rerank_scores("frage", ["eins", "zwei"]) == [9.0, 4.0]
+    payload = captured["payload"]
+    assert isinstance(payload, dict)
+    assert payload["reasoning_effort"] == "low"
+
+
+def test_rerank_falls_back_to_spark(monkeypatch: pytest.MonkeyPatch) -> None:
+    from strompilot.llm.client import META_BASE_URL, SPARK_MODEL, ChatClient
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self) -> dict[str, object]:
+            return {"choices": [{"message": {"content": "0: 9\n1: 4\n"}}]}
+
+    def fake_post(
+        url: str, headers: dict[str, str], json: dict[str, object], timeout: float
+    ) -> FakeResponse:
+        del headers, json, timeout
+        if "baseten" in url:
+            raise httpx.ConnectError("baseten down")
+        return FakeResponse()
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    fallback = ChatClient(META_BASE_URL, "meta-key", SPARK_MODEL)
+    client = BasetenClient(api_key="baseten-key", fallback=fallback)
+    assert client.rerank_scores("frage", ["eins", "zwei"]) == [9.0, 4.0]
+
+
+def test_rerank_returns_zeros_when_fallback_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from strompilot.llm.client import META_BASE_URL, SPARK_MODEL, ChatClient
+
+    def fake_post(
+        url: str, headers: dict[str, str], json: dict[str, object], timeout: float
+    ) -> object:
+        del url, headers, json, timeout
+        raise httpx.ConnectError("all down")
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    fallback = ChatClient(META_BASE_URL, "meta-key", SPARK_MODEL)
+    client = BasetenClient(api_key="baseten-key", fallback=fallback)
+    assert client.rerank_scores("frage", ["eins", "zwei"]) == [0.0, 0.0]
+
+
 def test_baseten_client_falls_back_on_garbage() -> None:
     client = BasetenClient(api_key="test-key")
     scores = client._parse_scores("keine zahlen hier", 3)
