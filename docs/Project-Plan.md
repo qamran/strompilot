@@ -82,6 +82,12 @@ We use each of the following because it earns its place:
   scheduler, explainer, critic). It enforces order, branching, and human
   approval, and it is the centerpiece of the whole system. (Key-Concepts §13,
   §15, §18.)
+- A model router that pins each worker and job to a model leg by job type,
+  with per-call fallback and per-model spend tracking. Reasoning stays on
+  Muse Spark, volume moves to Spark Open on Baseten.
+- Muse Wonder for the critic gate, SAM 3.1 for meter and roof measuring, and
+  Muse Image for report and renovation visuals, because each earns its place
+  and deepens Meta tooling use.
 - Retrieval as a tool the agent controls, with query rewriting and re-ranking,
   instead of a fixed retrieval pipe. (Key-Concepts §13.)
 - Structured output with Pydantic schemas, because life-to-plan lives or dies
@@ -134,10 +140,18 @@ Python backend over REST plus live event streams, using one typed contract. The
 backend runs a LangGraph supervisor graph with four workers that share typed
 state and two SQLite databases. Eight tools cover prices, baselines,
 optimization, explanation, meter intake, alerts, memory, and rule lookup.
-Guards wrap everything, and feedback flows back into preferences. The primary
-model leg calls Muse Spark 1.3 on Meta's endpoint, and the second leg calls
-Muse Spark Open on Baseten. Beside the app, the wallbox simulator runs as its
-own MCP server process, which the agent drives like a real device driver.
+Guards wrap everything, and feedback flows back into preferences. A model
+router splits the work across two legs by job type: Muse Spark 1.3 on Meta's
+endpoint owns the hard reasoning (supervisor, analyst, scheduler, critic, and
+life-to-plan extraction), while Muse Spark Open on Baseten owns the
+high-volume jobs (narration drafts, rule re-ranking, alarm triage, and eval
+judges). Every Baseten call falls back to Muse Spark when Baseten lags or
+fails, and every block records which model wrote it. Pinned extras: the
+critic runs on Muse Wonder, meter photos pass through SAM 3.1 segmentation,
+Muse Image illustrates the monthly report, and the SP-14 teaser adds roof
+measuring plus renovation previews. Beside the app, the
+wallbox simulator runs as its own MCP server process, which the agent drives
+like a real device driver.
 
 ```
 Browser: Next.js "Leitstand" ── Preise │ Fahrplan │ Zähler │ Alarme │ Über
@@ -150,7 +164,9 @@ Supervisor graph: perceive → delegate → review → publish
   tools: prices, baseline, optimize, explain, meter, alerts, memory, rules
   guards: approvals, data stripping, cost rail, loop pause, audit log
   learning: feedback → preferences → measured improvement
-Models: Meta muse-spark-1.3 (primary) │ Baseten spark-open-1026 (second leg)
+Models: Meta muse-spark-1.3 (reasoning) │ Baseten spark-open-1026 (volume)
+Router: per-worker assignment + per-call Spark fallback + spend log
+Pinned: critic on Wonder │ SAM 3.1 meter+roof masks │ Image report+preview art
 Deterministic core: price cache, H0 engine, tariff math, BM25, evals
 
 Beside the app: wallbox simulator (own MCP server process)
@@ -169,8 +185,9 @@ Core features:
   gate.
 - Device schedules for heat pump, wallbox, washer, and battery are priced in
   euros.
-- German explanations cite tariff rules, every block replays its reasoning,
-  and the live agent trace streams into the UI.
+- German explanations cite tariff rules, every block replays its reasoning
+  and names the model that wrote it, and the live agent trace streams into
+  the UI.
 - Thumbs up and down visibly improve future plans through the learning loop.
 - Flex-Alarm uses judgment and quiet hours, delivered in-app plus email or push.
 - Meter photos become confirmed readings and trigger re-plan diffs.
@@ -183,7 +200,9 @@ Core features:
 
 Optional extras (Phase 4):
 - Our own public MCP energy server.
-- A balcony-solar teaser tab, clearly labeled as a teaser.
+- A solar and renovation teaser tab with a SAM roof-area estimate and Muse
+  Image renovation previews, clearly labeled as a teaser with AI-labeled
+  visuals.
 
 ## UI design concepts ("Leitstand")
 
@@ -313,7 +332,8 @@ knowledge that it can cite.
 Deliverables:
 
 This issue delivers the twenty-document corpus, the chunker, the
-BM25 index, and the re-ranking retriever with citations.
+BM25 index, and the re-ranking retriever with citations. Re-ranking
+runs on Spark Open through Baseten.
 
 Success criteria:
 
@@ -332,13 +352,15 @@ workers behind guard rails.
 Deliverables:
 
 This issue delivers the running LangGraph supervisor graph, the
-analyst, scheduler, explainer, and critic workers, the typed state, and the
-guard implementations.
+analyst, scheduler, explainer, and critic workers with the critic running
+on Muse Wonder, the typed state, the model router with per-worker
+assignments and Spark fallback, and the guard implementations.
 
 Success criteria:
 
-It succeeds when routing goldens pass, critic veto cases
-behave correctly, and every guard trigger fires under test.
+It succeeds when routing goldens pass, model assignments hold under test,
+Baseten failures fall back to Spark, critic veto cases behave correctly,
+and every guard trigger fires under test.
 
 ### Issue SP-05: life-to-plan
 
@@ -351,6 +373,8 @@ Deliverables:
 
 This issue delivers the extraction prompts, the Pydantic schemas,
 the scheduling flow, and the narration pipeline with editable constraints.
+Extraction runs on Muse Spark for reliability, while narration drafts run
+on Spark Open through Baseten.
 
 Success criteria:
 
@@ -403,7 +427,8 @@ thresholds.
 Deliverables:
 
 This issue delivers the watcher loop, the alert composer, quiet
-hours logic, and all delivery paths including email or push.
+hours logic, and all delivery paths including email or push. Triage
+runs on Spark Open through Baseten.
 
 Success criteria:
 
@@ -418,8 +443,10 @@ We turn a meter photo into a confirmed reading that improves the plan.
 
 Deliverables:
 
-This issue delivers the photo intake endpoint, the Spark vision
-extraction prompt, and the human confirm flow with the re-plan diff.
+This issue delivers the photo intake endpoint, the SAM 3.1 display
+segmentation step driven by text prompts such as electricity meter, the
+Spark vision extraction prompt, and the human confirm flow with the
+re-plan diff.
 
 Success criteria:
 
@@ -471,7 +498,8 @@ Deliverables:
 
 This issue delivers all five views, the memory sidebar, the
 "why" overlay, the glass-box drawers, live trace streaming, the canvas heatmap,
-the animated odometer, both languages, and all disclaimers.
+the animated odometer, both languages, the monthly report illustration,
+and all disclaimers.
 
 Success criteria:
 
@@ -487,8 +515,9 @@ We prove quality with a real evaluation suite instead of vibes.
 Deliverables:
 
 This issue delivers the thirty-plus case dataset, the prompt
-comparison runner, the cross-model judges, the faithfulness and context
-metrics, the red-team set, and the CI wiring.
+comparison runner, the cross-model judges with Spark Open judging Muse
+Spark outputs, the faithfulness and context metrics, the red-team set,
+and the CI wiring.
 
 Success criteria:
 
@@ -499,17 +528,23 @@ documented.
 
 Goal:
 
-We harden delivery and optionally open our data to outside assistants.
+We harden delivery, optionally open our data to outside assistants, and
+optionally preview solar and renovation visuals.
 
 Deliverables:
 
-This issue delivers hardened delivery receipts and, if built,
-our own public energy MCP server.
+This issue delivers hardened delivery receipts and, if built, our own
+public energy MCP server plus the solar and renovation teaser: a SAM 3.1
+roof-area outline with a panel-fit estimate, and Muse Image renovation
+previews showing solar panels, a heat pump, or new facade cladding on the
+household's own photo. Every preview is labeled as an AI visualization.
 
 Success criteria:
 
-It succeeds when delivery receipts arrive and the MCP
-round-trip works. This issue dies silently if the core needs the time.
+It succeeds when delivery receipts arrive, the MCP round-trip works if
+built, the roof estimate lands within tolerance on sample photos, and
+every preview carries its AI label. This issue dies silently if the core
+needs the time.
 
 ### Issue SP-15: authentication
 
@@ -539,7 +574,8 @@ We make the project watertight, compliant, and ready to show.
 Deliverables:
 
 This issue delivers the compliance audit reports, the Meta-only
-endpoint audit, the README, the rehearsal recordings, and the demo video.
+endpoint audit, the model usage register, the README, the rehearsal
+recordings, and the demo video.
 
 Success criteria:
 
@@ -568,8 +604,8 @@ time.
 
 - Depth competes with focus, so phase gates decide and the optional phase dies
   first.
-- If Baseten lags, the demo runs on Spark alone and the open leg degrades
-  gracefully.
+- If Baseten lags, the model router falls back to Muse Spark per call, so
+  plans still complete and the open leg degrades gracefully.
 - Surcharge defaults can drift, so parameters stay editable with sourced links
   and get re-checked at freeze.
 - Frontend and backend can drift apart, so one typed contract plus shared
