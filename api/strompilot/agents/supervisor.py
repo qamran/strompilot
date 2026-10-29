@@ -3,6 +3,7 @@
 from functools import partial
 from typing import Literal
 
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
@@ -40,7 +41,9 @@ def route_next(state: PlanState) -> Literal["scheduler", "publish", "end"]:
 
 
 def build_graph(
-    router: ChatRouter, price_loader: PriceLoader
+    router: ChatRouter,
+    price_loader: PriceLoader,
+    checkpointer: BaseCheckpointSaver[str] | None = None,
 ) -> CompiledStateGraph[PlanState, None, PlanState, PlanState]:
     """Compile the supervisor graph with one router for every worker."""
     graph = StateGraph(PlanState)
@@ -63,4 +66,4 @@ def build_graph(
         {"scheduler": "scheduler", "publish": "publish", "end": END},
     )
     graph.add_edge("publish", END)
-    return graph.compile()
+    return graph.compile(checkpointer=checkpointer)

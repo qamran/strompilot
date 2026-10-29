@@ -15,6 +15,7 @@ dependencies = [
     "httpx",
     "tzdata",
     "langgraph",
+    "langgraph-checkpoint-sqlite",
 ]
 
 [project.optional-dependencies]

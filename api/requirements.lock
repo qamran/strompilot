@@ -2,6 +2,8 @@
 #    uv pip compile api/requirements.in -o api/requirements.lock
 -e ./api
     # via -r api/requirements.in
+aiosqlite==0.22.1
+    # via langgraph-checkpoint-sqlite
 annotated-doc==0.0.5
     # via fastapi
 annotated-types==0.8.0
@@ -76,7 +78,10 @@ langgraph==1.2.18
 langgraph-checkpoint==4.3.1
     # via
     #   langgraph
+    #   langgraph-checkpoint-sqlite
     #   langgraph-prebuilt
+langgraph-checkpoint-sqlite==3.1.2
+    # via strompilot
 langgraph-prebuilt==1.1.1
     # via langgraph
 langgraph-sdk==0.4.10
@@ -137,6 +142,8 @@ ruff==0.17.3
     # via strompilot
 sniffio==1.3.1
     # via langsmith
+sqlite-vec==0.1.9
+    # via langgraph-checkpoint-sqlite
 starlette==1.10.0
     # via fastapi
 tenacity==9.2.1
