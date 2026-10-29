@@ -4,6 +4,8 @@ Internal/
 # Secrets (API keys live here — never commit)
 .env
 .env.local
+.env.*
+!.env.example
 
 # Python
 .venv/

@@ -1,0 +1,3 @@
+# Reproducible backend environment (see README). Regenerate from the
+# project root with: uv pip compile api/requirements.in -o api/requirements.lock
+-e ./api[dev]

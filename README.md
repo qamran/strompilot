@@ -27,8 +27,10 @@ cp .env.example .env
 # Fill in META_API_KEY and BASETEN_API_KEY in .env.
 
 uv venv .venv
-uv pip install --python .venv/Scripts/python.exe -e ./api
+uv pip install --python .venv/Scripts/python.exe -r api/requirements.lock
 .venv/Scripts/python -m pytest api/tests
+.venv/Scripts/ruff check api scripts
+.venv/Scripts/mypy --config-file api/pyproject.toml api/strompilot api/tests
 
 cd web
 npm install
@@ -39,6 +41,14 @@ npm run lint
 
 On macOS and Linux the Python commands use `.venv/bin/python` instead of
 `.venv/Scripts/python`.
+
+The lock file `api/requirements.lock` pins every backend dependency, so all
+checkouts install identical versions. Regenerate it from the project root
+after changing dependencies:
+
+```sh
+uv pip compile api/requirements.in -o api/requirements.lock
+```
 
 ## Run the API
 

@@ -15,9 +15,7 @@ ROOT = Path(__file__).resolve().parent.parent
 TIMEOUT_SECONDS = 60.0
 
 
-def check_chat_completions(
-    label: str, base_url: str, model: str, api_key: str
-) -> bool:
+def check_chat_completions(label: str, base_url: str, model: str, api_key: str) -> bool:
     """Send one tiny chat completion and report success without logging secrets."""
     url = f"{base_url}/chat/completions"
     try:
