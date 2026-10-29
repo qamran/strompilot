@@ -2,7 +2,7 @@
 
 import io
 from collections.abc import Iterator
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -35,7 +35,7 @@ def vision(boxes: list[Any], analyst: list[Any]) -> MeterVision:
 @pytest.fixture
 def meter_setup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> Iterator[TestClient]:
+) -> Iterator[tuple[TestClient, Path]]:
     """Test client with scripted vision on scratch storage."""
     monkeypatch.setenv("MEMORY_DB", str(tmp_path / "memory.db"))
     monkeypatch.setenv("METER_PHOTOS_DIR", str(tmp_path / "photos"))
@@ -51,8 +51,25 @@ def meter_setup(
     app.dependency_overrides[get_meter_vision] = lambda: vision(
         [[], []], [reply('{"value_kwh": 100.0, "confidence": "high"}')] * 4
     )
-    yield TestClient(app)
+    yield TestClient(app), tmp_path
     app.dependency_overrides.clear()
+
+
+def seed_confirmed(db_path: Path, value_kwh: float, days_ago: int) -> dict[str, object]:
+    """Seed one confirmed reading days ago, bypassing vision."""
+    from strompilot.metervision.store import MeterStore
+
+    store = MeterStore(db_path / "memory.db")
+    proposed = store.propose(
+        household_id="h1",
+        value_kwh=value_kwh,
+        read_at=datetime.now(UTC) - timedelta(days=days_ago),
+        confidence="high",
+        sam_box=None,
+        photo_path="seed.png",
+    )
+    confirmed = store.confirm("h1", proposed.id, corrected_kwh=None)
+    return {"id": confirmed.id, "value_kwh": confirmed.value_kwh}
 
 
 def upload(client: TestClient, photo: bytes, name: str = "meter.png") -> object:
@@ -65,22 +82,28 @@ def upload(client: TestClient, photo: bytes, name: str = "meter.png") -> object:
     return response.json()
 
 
-def test_intake_proposes_and_lists(meter_setup: TestClient) -> None:
-    created = upload(meter_setup, png())
+def test_intake_proposes_and_lists(
+    meter_setup: tuple[TestClient, Path],
+) -> None:
+    client, _ = meter_setup
+    created = upload(client, png())
     assert isinstance(created, dict)
     assert created["status"] == "proposed"
     assert created["value_kwh"] == 100.0
     assert created["id"] == 1
     assert "/" not in created["photo_path"] and "\\" not in created["photo_path"]
-    listed = meter_setup.get("/meter/readings?household_id=h1")
+    listed = client.get("/meter/readings?household_id=h1")
     assert listed.status_code == 200
     assert len(listed.json()["readings"]) == 1
 
 
-def test_first_confirm_has_no_calibration(meter_setup: TestClient) -> None:
-    created = upload(meter_setup, png())
+def test_first_confirm_has_no_calibration(
+    meter_setup: tuple[TestClient, Path],
+) -> None:
+    client, _ = meter_setup
+    created = upload(client, png())
     assert isinstance(created, dict)
-    decided = meter_setup.post(
+    decided = client.post(
         f"/meter/readings/{created['id']}/confirm?household_id=h1", json={}
     )
     assert decided.status_code == 200
@@ -91,12 +114,14 @@ def test_first_confirm_has_no_calibration(meter_setup: TestClient) -> None:
     assert "weiterer" in payload["note"]
 
 
-def test_second_confirm_calibrates_and_diffs(meter_setup: TestClient) -> None:
-    first = upload(meter_setup, png())
-    second = upload(meter_setup, png())
-    assert isinstance(first, dict) and isinstance(second, dict)
-    meter_setup.post(f"/meter/readings/{first['id']}/confirm?household_id=h1", json={})
-    decided = meter_setup.post(
+def test_second_confirm_calibrates_and_diffs(
+    meter_setup: tuple[TestClient, Path],
+) -> None:
+    client, tmp_path = meter_setup
+    first = seed_confirmed(tmp_path, 100.0, days_ago=10)
+    second = upload(client, png())
+    assert isinstance(second, dict)
+    decided = client.post(
         f"/meter/readings/{second['id']}/confirm?household_id=h1",
         json={
             "corrected_value_kwh": 200.0,
@@ -117,24 +142,29 @@ def test_second_confirm_calibrates_and_diffs(meter_setup: TestClient) -> None:
     payload = decided.json()
     assert payload["reading"]["value_kwh"] == 200.0
     assert payload["calibration"] is not None
+    assert payload["calibration"]["kwh_per_day"] == 10.0
+    assert payload["calibration"]["annual_kwh"] == 3650.0
+    assert payload["calibration"]["from_reading_id"] == first["id"]
     assert payload["diff"]["devices_unchanged"] is True
-    stored = meter_setup.get("/memory/preferences?household_id=h1")
+    stored = client.get("/memory/preferences?household_id=h1")
     assert (
         stored.json()["preferences"]["annual_kwh"]
         == payload["calibration"]["annual_kwh"]
     )
 
 
-def test_proposed_readings_never_enter_math(meter_setup: TestClient) -> None:
-    first = upload(meter_setup, png())
-    assert isinstance(first, dict)
-    meter_setup.post(f"/meter/readings/{first['id']}/confirm?household_id=h1", json={})
-    stray = upload(meter_setup, png())
+def test_proposed_readings_never_enter_math(
+    meter_setup: tuple[TestClient, Path],
+) -> None:
+    client, tmp_path = meter_setup
+    first = seed_confirmed(tmp_path, 100.0, days_ago=10)
+    stray = upload(client, png())
     assert isinstance(stray, dict)
-    third = upload(meter_setup, png())
+    third = upload(client, png())
     assert isinstance(third, dict)
-    decided = meter_setup.post(
-        f"/meter/readings/{third['id']}/confirm?household_id=h1", json={}
+    decided = client.post(
+        f"/meter/readings/{third['id']}/confirm?household_id=h1",
+        json={"corrected_value_kwh": 200.0},
     )
     calibration = decided.json()["calibration"]
     assert calibration is not None
@@ -142,30 +172,38 @@ def test_proposed_readings_never_enter_math(meter_setup: TestClient) -> None:
     assert calibration["to_reading_id"] == third["id"]
 
 
-def test_unknown_reading_returns_404(meter_setup: TestClient) -> None:
-    decided = meter_setup.post("/meter/readings/999/confirm?household_id=h1", json={})
+def test_unknown_reading_returns_404(
+    meter_setup: tuple[TestClient, Path],
+) -> None:
+    client, _ = meter_setup
+    decided = client.post("/meter/readings/999/confirm?household_id=h1", json={})
     assert decided.status_code == 404
 
 
-def test_blank_household_rejected(meter_setup: TestClient) -> None:
-    response = meter_setup.post(
+def test_blank_household_rejected(
+    meter_setup: tuple[TestClient, Path],
+) -> None:
+    client, _ = meter_setup
+    response = client.post(
         "/meter/readings?household_id=+",
         files={"file": ("meter.png", png(), "image/png")},
     )
     assert response.status_code == 422
-    assert meter_setup.get("/meter/readings?household_id=+").status_code == 422
+    assert client.get("/meter/readings?household_id=+").status_code == 422
 
 
-def test_non_image_rejected(meter_setup: TestClient) -> None:
-    response = meter_setup.post(
+def test_non_image_rejected(meter_setup: tuple[TestClient, Path]) -> None:
+    client, _ = meter_setup
+    response = client.post(
         "/meter/readings?household_id=h1",
         files={"file": ("notes.txt", b"4217", "text/plain")},
     )
     assert response.status_code == 422
 
 
-def test_oversize_photo_rejected(meter_setup: TestClient) -> None:
-    response = meter_setup.post(
+def test_oversize_photo_rejected(meter_setup: tuple[TestClient, Path]) -> None:
+    client, _ = meter_setup
+    response = client.post(
         "/meter/readings?household_id=h1",
         files={"file": ("big.png", b"x" * (11 * 1024 * 1024), "image/png")},
     )

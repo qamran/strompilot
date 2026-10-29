@@ -45,6 +45,7 @@ class PlanState(TypedDict, total=False):
     """Everything the graph knows about one planning run."""
 
     request: str
+    household_id: str
     intent: str
     analysis: list[str]
     constraints: dict[str, Any]

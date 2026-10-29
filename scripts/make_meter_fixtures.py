@@ -49,7 +49,9 @@ def draw_digit(draw: ImageDraw.ImageDraw, glyph: str, x: int, y: int) -> None:
         draw.rectangle(boxes[segment], fill=ink)
 
 
-def draw_display(text: str, font: ImageFont.ImageFont) -> Image.Image:
+def draw_display(
+    text: str, font: ImageFont.FreeTypeFont | ImageFont.ImageFont
+) -> Image.Image:
     """Draw one 800x600 meter photo showing the given register text."""
     photo = Image.new("RGB", (800, 600), (58, 60, 64))
     draw = ImageDraw.Draw(photo)

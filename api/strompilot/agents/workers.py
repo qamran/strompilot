@@ -6,6 +6,8 @@ from typing import Any
 from langgraph.types import interrupt
 from pydantic import ValidationError
 
+from strompilot.learning.apply import apply_learned_windows
+from strompilot.learning.update import LEARNED_KEY
 from strompilot.lifeplan.errors import LifeplanError
 from strompilot.lifeplan.extract import analyze
 from strompilot.lifeplan.loaders import LoadedPrices, PriceLoader
@@ -17,6 +19,7 @@ from strompilot.lifeplan.schemas import (
 )
 from strompilot.llm.client import LOW_EFFORT, MINIMAL_EFFORT
 from strompilot.llm.types import ChatRouter, LlmError, Message
+from strompilot.memory.store import MemoryStore
 from strompilot.safety import quote_user_text
 
 from .guards import approval_granted, audit_event, review_cap_reached
@@ -106,9 +109,18 @@ def analyst_node(state: PlanState, router: ChatRouter) -> PlanState:
     )
 
 
-def scheduler_node(state: PlanState, price_loader: PriceLoader) -> PlanState:
+def scheduler_node(
+    state: PlanState,
+    price_loader: PriceLoader,
+    memory: MemoryStore | None = None,
+) -> PlanState:
     """Place every device into its cheapest feasible hours."""
     constraints = _read_constraints(state, "scheduler")
+    household_id = (state.get("household_id") or "").strip()
+    if memory is not None and household_id:
+        learned = memory.get_preference(household_id, LEARNED_KEY)
+        if isinstance(learned, dict):
+            constraints = apply_learned_windows(constraints, learned)
     loaded: LoadedPrices = price_loader()
     plan = optimize(constraints, loaded.bars)
     schedule = [

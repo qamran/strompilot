@@ -24,6 +24,8 @@ from strompilot.contract import CONTRACT_VERSION, HealthResponse
 from strompilot.flexalarm.loop import run_once
 from strompilot.flexalarm.models import Alert, WatchReport
 from strompilot.flexalarm.store import AlertStore
+from strompilot.learning.models import Feedback, LearningError, Verdict
+from strompilot.learning.update import LEARNED_KEY, update_from_feedback
 from strompilot.lifeplan.loaders import load_price_bars
 from strompilot.lifeplan.schemas import DeviceConstraint
 from strompilot.llm.types import LlmError
@@ -535,3 +537,64 @@ def confirm_reading(
     return ConfirmResponse(
         reading=reading, calibration=calibration, diff=diff, note=diff.note
     )
+
+
+class FeedbackBody(BaseModel):
+    """One household verdict on a planned device run."""
+
+    device: str
+    verdict: Verdict
+    note: str = ""
+
+
+class FeedbackResponse(BaseModel):
+    """Stored feedback plus the learned windows it produced."""
+
+    household_id: str
+    episode: Episode
+    learned_windows: dict[str, dict[str, int]]
+
+
+class FeedbackListResponse(BaseModel):
+    """One household's feedback, newest first."""
+
+    household_id: str
+    feedback: list[Episode]
+
+
+@app.post("/feedback", response_model=FeedbackResponse)
+def submit_feedback(household_id: str, body: FeedbackBody) -> FeedbackResponse:
+    """Store one verdict and fold it into the learned windows."""
+    try:
+        feedback = Feedback(device=body.device, verdict=body.verdict, note=body.note)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    store = _store()
+    try:
+        current = store.get_preference(household_id, LEARNED_KEY) or {}
+        if not isinstance(current, dict):
+            current = {}
+        learned = update_from_feedback(feedback, current)
+        store.set_preference(household_id, LEARNED_KEY, learned)
+        text = f"{feedback.device}: {feedback.verdict}"
+        if feedback.note.strip():
+            text += f" ({feedback.note.strip()})"
+        episode = store.add_episode(household_id, "feedback", text)
+    except (MemoryError, LearningError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return FeedbackResponse(
+        household_id=household_id, episode=episode, learned_windows=learned
+    )
+
+
+@app.get("/feedback", response_model=FeedbackListResponse)
+def read_feedback(
+    household_id: str,
+    limit: int = Query(default=50, ge=1, le=200),
+) -> FeedbackListResponse:
+    """List one household's feedback, newest first."""
+    try:
+        episodes = _store().list_episodes(household_id, kind="feedback", limit=limit)
+    except MemoryError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return FeedbackListResponse(household_id=household_id, feedback=episodes)

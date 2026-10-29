@@ -1,0 +1,16 @@
+{
+  "washer-morning": [
+    "Waschmaschine 06:00-08:00 1.20 EUR"
+  ],
+  "ev-night-dishwasher-evening": [
+    "E-Auto 00:00-04:00 9.90 EUR",
+    "Geschirrspueler 20:00-22:00 0.68 EUR"
+  ],
+  "stove-fixed-time": [
+    "Herd 18:00-19:00 0.90 EUR"
+  ],
+  "washer-dryer-morning-typicals": [
+    "Waschmaschine 06:00-08:00 1.20 EUR",
+    "Trockner 06:00-08:00 1.50 EUR"
+  ]
+}
