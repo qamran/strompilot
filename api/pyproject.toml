@@ -15,6 +15,7 @@ dependencies = [
     "python-multipart",
     "httpx",
     "pillow",
+    "mcp",
     "tzdata",
     "langgraph",
     "langgraph-checkpoint-sqlite",
@@ -29,7 +30,7 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["strompilot*"]
+include = ["strompilot*", "wallbox*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

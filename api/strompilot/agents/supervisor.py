@@ -10,12 +10,15 @@ from langgraph.graph.state import CompiledStateGraph
 from strompilot.lifeplan.loaders import PriceLoader
 from strompilot.llm.types import ChatRouter
 from strompilot.memory.store import MemoryStore
+from strompilot.wallbox.client import WallboxDriver
+from strompilot.wallbox.policy import ChargePolicy
 
 from .state import PlanState
 from .workers import (
     analyst_node,
     approve_node,
     critic_node,
+    dispatch_node,
     explainer_node,
     perceive_node,
     publish_node,
@@ -42,11 +45,20 @@ def route_next(state: PlanState) -> Literal["scheduler", "publish", "end"]:
     return "scheduler"
 
 
+def route_dispatch(state: PlanState) -> Literal["publish", "end"]:
+    """Route after dispatch: a blocked charge never publishes."""
+    if state.get("error"):
+        return "end"
+    return "publish"
+
+
 def build_graph(
     router: ChatRouter,
     price_loader: PriceLoader,
     checkpointer: BaseCheckpointSaver[str] | None = None,
     memory: MemoryStore | None = None,
+    wallbox: WallboxDriver | None = None,
+    policy: ChargePolicy | None = None,
 ) -> CompiledStateGraph[PlanState, None, PlanState, PlanState]:
     """Compile the supervisor graph with one router for every worker."""
     graph = StateGraph(PlanState)
@@ -57,11 +69,15 @@ def build_graph(
     )
     graph.add_node("explainer", partial(explainer_node, router=router))
     graph.add_node("critic", partial(critic_node, router=router))
+    graph.add_node("dispatch", partial(dispatch_node, wallbox=wallbox, policy=policy))
     graph.add_node("publish", publish_node)
-    publish_target = "publish"
+    graph.add_conditional_edges(
+        "dispatch", route_dispatch, {"publish": "publish", "end": END}
+    )
+    publish_target = "dispatch"
     if checkpointer is not None:
         graph.add_node("approve", approve_node)
-        graph.add_edge("approve", "publish")
+        graph.add_edge("approve", "dispatch")
         publish_target = "approve"
     graph.add_edge(START, "perceive")
     graph.add_conditional_edges(

@@ -10,6 +10,7 @@ from strompilot.llm.client import SPARK_MODEL
 from strompilot.llm.types import ChatResult, Message
 from strompilot.metervision.sam import SegmentBox
 from strompilot.prices.models import BERLIN, PricePoint, PriceSeries
+from strompilot.wallbox.client import WallboxStatus
 
 
 def reply(
@@ -129,6 +130,38 @@ class StubLeg:
         if isinstance(next_up, Exception):
             raise next_up
         return next_up
+
+
+class FakeWallbox:
+    """Scripted wallbox that records programmed windows."""
+
+    def __init__(self, script: list[WallboxStatus | Exception]) -> None:
+        self._script = list(script)
+        self.programs: list[tuple[str, str, float]] = []
+
+    def program(self, start_iso: str, end_iso: str, max_kw: float) -> WallboxStatus:
+        """Record one programmed window or raise the scripted error."""
+        self.programs.append((start_iso, end_iso, max_kw))
+        if not self._script:
+            raise AssertionError("no scripted status left")
+        next_up = self._script.pop(0)
+        if isinstance(next_up, Exception):
+            raise next_up
+        return next_up
+
+
+def idle_wallbox_status() -> WallboxStatus:
+    """Build a plugged-in idle wallbox status."""
+    return WallboxStatus(
+        plugged=True,
+        charging=False,
+        power_kw=0.0,
+        max_kw=0.0,
+        session_kwh=0.0,
+        total_kwh=0.0,
+        sim_now="2026-06-01T00:00:00+02:00",
+        program=None,
+    )
 
 
 class FakeSam:

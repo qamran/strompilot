@@ -1,6 +1,7 @@
 """Worker nodes: extraction, optimization, narration, review."""
 
 import json
+from datetime import date, datetime
 from typing import Any
 
 from langgraph.types import interrupt
@@ -20,7 +21,10 @@ from strompilot.lifeplan.schemas import (
 from strompilot.llm.client import LOW_EFFORT, MINIMAL_EFFORT
 from strompilot.llm.types import ChatRouter, LlmError, Message
 from strompilot.memory.store import MemoryStore
+from strompilot.prices.models import BERLIN
 from strompilot.safety import quote_user_text
+from strompilot.wallbox.client import WallboxDriver, WallboxError, iso_window
+from strompilot.wallbox.policy import ChargePolicy, authorize
 
 from .guards import approval_granted, audit_event, review_cap_reached
 from .state import CitationState, CriticVerdict, PlanState, PriceBarState, Slot
@@ -31,6 +35,9 @@ PERCEIVE_TOKENS = 100
 CRITIC_TOKENS = 1000
 
 DETERMINISTIC = "deterministic"
+
+_EV_NAMES = {"e-auto", "wallbox"}
+_FOLD = str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss"})
 
 
 def _attributed(state: PlanState, block: str, model: str) -> dict[str, str]:
@@ -289,6 +296,78 @@ def approve_node(state: PlanState) -> PlanState:
                 "approved by human" if approved else "rejected by human",
             )
         ],
+    )
+
+
+def _slot_power_kw(slot: Slot) -> float:
+    """Derive average kW from one slot's energy over its hours."""
+    energy = slot.get("energy_kwh")
+    if energy is None:
+        raise LifeplanError("dispatch needs priced slots")
+    start = _clock_minutes(slot["start"])
+    end = _clock_minutes(slot["end"])
+    if end <= start:
+        end += 24 * 60
+    hours = (end - start) / 60
+    if hours <= 0:
+        raise LifeplanError("dispatch needs priced slots")
+    return round(energy / hours, 2)
+
+
+def _clock_minutes(clock: str) -> int:
+    """Convert HH:MM to minutes since midnight."""
+    hours, minutes = clock.split(":")
+    return int(hours) * 60 + int(minutes)
+
+
+def dispatch_node(
+    state: PlanState,
+    wallbox: WallboxDriver | None = None,
+    policy: ChargePolicy | None = None,
+) -> PlanState:
+    """Program the E-Auto slot into the wallbox behind policy gates."""
+    if wallbox is None:
+        return PlanState(audit=[audit_event("dispatch", "skipped: no wallbox")])
+    slot = next(
+        (
+            item
+            for item in state.get("schedule", [])
+            if item["device"].strip().lower().translate(_FOLD) in _EV_NAMES
+        ),
+        None,
+    )
+    if slot is None:
+        return PlanState(audit=[audit_event("dispatch", "skipped: no E-Auto slot")])
+    power = _slot_power_kw(slot)
+    raw_day = state.get("plan_day") or ""
+    try:
+        day = date.fromisoformat(raw_day) if raw_day else datetime.now(BERLIN).date()
+    except ValueError as exc:
+        raise LifeplanError(f"dispatch needs a plan day: {exc}") from exc
+    try:
+        start_iso, end_iso = iso_window(day, slot["start"], slot["end"])
+    except WallboxError as exc:
+        raise LifeplanError(f"dispatch needs slot times: {exc}") from exc
+    decision = authorize(policy or ChargePolicy(), start_iso, end_iso, power)
+    if not decision.allowed:
+        return PlanState(
+            error=f"dispatch blocked: {decision.reason}",
+            audit=[audit_event("dispatch", f"blocked: {decision.reason}")],
+        )
+    try:
+        wallbox.program(start_iso, end_iso, power)
+    except WallboxError as exc:
+        return PlanState(
+            error=f"dispatch failed: {exc}",
+            audit=[audit_event("dispatch", f"failed: {exc}")],
+        )
+    return PlanState(
+        audit=[
+            audit_event(
+                "dispatch",
+                f"E-Auto programmed {slot['start']}-{slot['end']} at {power} kW",
+            )
+        ]
     )
 
 
