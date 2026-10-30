@@ -21,16 +21,25 @@ export default function ConsentGate({
   const [checked, setChecked] = useState(false);
 
   useEffect(() => {
-    Promise.resolve(
-      sessionStorage.getItem(`strompilot-consent:${storageKey}`) === "1",
-    ).then((stored) => {
-      setAgreed(stored);
-      onChange?.(stored);
+    let stored = false;
+    try {
+      stored =
+        sessionStorage.getItem(`strompilot-consent:${storageKey}`) === "1";
+    } catch {
+      stored = false;
+    }
+    Promise.resolve(stored).then((value) => {
+      setAgreed(value);
+      onChange?.(value);
     });
   }, [storageKey, onChange]);
 
   function confirm() {
-    sessionStorage.setItem(`strompilot-consent:${storageKey}`, "1");
+    try {
+      sessionStorage.setItem(`strompilot-consent:${storageKey}`, "1");
+    } catch {
+      // Storage blocked: consent holds for this view only.
+    }
     setAgreed(true);
     onChange?.(true);
   }
