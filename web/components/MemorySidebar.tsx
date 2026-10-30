@@ -25,6 +25,33 @@ export default function MemorySidebar() {
     const label = verdictLabel[text.slice(cut + 2).trim()];
     return label ? `${text.slice(0, cut)}: ${label}` : text;
   }
+
+  const prefLabel: Record<string, string> = {
+    annual_kwh: t.memoryAnnual,
+    learned_windows: t.memoryLearned,
+    devices: t.memoryDevices,
+    quiet_hours: t.memoryQuiet,
+  };
+
+  function isEmpty(value: unknown): boolean {
+    if (value === null || value === undefined || value === "") return true;
+    if (typeof value === "number") return value === 0;
+    if (Array.isArray(value)) return value.length === 0;
+    if (typeof value === "object") return Object.keys(value).length === 0;
+    return false;
+  }
+
+  function prefText(key: string, value: unknown): string {
+    if (key === "annual_kwh" && typeof value === "number") {
+      return `${value} kWh`;
+    }
+    if (key === "learned_windows" && typeof value === "object" && value !== null) {
+      const count = Object.keys(value).length;
+      return `${count} ${t.memoryDevices.toLowerCase()}`;
+    }
+    if (Array.isArray(value)) return value.map(String).join(", ");
+    return JSON.stringify(value) ?? "";
+  }
   const [prefs, setPrefs] = useState<PreferencesMap>({
     household_id: "",
     preferences: {},
@@ -53,7 +80,9 @@ export default function MemorySidebar() {
     refresh();
   }
 
-  const keys = Object.keys(prefs.preferences);
+  const keys = Object.keys(prefs.preferences).filter(
+    (key) => !isEmpty(prefs.preferences[key]),
+  );
   return (
     <aside className="sidebar" aria-label={t.memoryTitle}>
       <h2>{t.memoryTitle}</h2>
@@ -65,7 +94,8 @@ export default function MemorySidebar() {
         {keys.map((key) => (
           <li key={key} className="memory-row">
             <span>
-              <code>{key}</code>: {JSON.stringify(prefs.preferences[key])}
+              <code>{prefLabel[key] ?? key}</code>:{" "}
+              {prefText(key, prefs.preferences[key])}
             </span>
             <button type="button" onClick={() => forget(key)}>
               {t.forget}

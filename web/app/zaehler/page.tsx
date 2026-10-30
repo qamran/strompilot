@@ -127,8 +127,9 @@ export default function MeterPage() {
               )}
               <span className="tabular">
                 #{reading.id} · {reading.value_kwh} kWh · {reading.status} ·
-                SAM {reading.sam_box ?? "–"} · {t.meterNumber}{" "}
-                {reading.serial ?? "–"}
+                SAM{" "}
+                {reading.sam_box ? t.meterDisplayFound : t.meterFullPhoto} ·{" "}
+                {t.meterNumber} {reading.serial ?? "–"}
               </span>
               {reading.status !== "confirmed" && (
                 <button type="button" onClick={() => confirm(reading.id)}>
