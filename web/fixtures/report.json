@@ -1,0 +1,361 @@
+{
+  "report": {
+    "month": "2026-05",
+    "annual_kwh": 3500.0,
+    "days": [
+      {
+        "day": "2026-05-01",
+        "kwh": 9.21,
+        "cost_eur": 1.97,
+        "cheapest_window": null,
+        "sample": false
+      },
+      {
+        "day": "2026-05-02",
+        "kwh": 10.59,
+        "cost_eur": 4.88,
+        "cheapest_window": {
+          "start": "02:00",
+          "end": "04:00",
+          "avg_ct_kwh": 32.22
+        },
+        "sample": true
+      },
+      {
+        "day": "2026-05-03",
+        "kwh": 10.81,
+        "cost_eur": 4.99,
+        "cheapest_window": {
+          "start": "02:00",
+          "end": "04:00",
+          "avg_ct_kwh": 32.22
+        },
+        "sample": true
+      },
+      {
+        "day": "2026-05-04",
+        "kwh": 9.21,
+        "cost_eur": 4.21,
+        "cheapest_window": {
+          "start": "02:00",
+          "end": "04:00",
+          "avg_ct_kwh": 32.22
+        },
+        "sample": true
+      },
+      {
+        "day": "2026-05-05",
+        "kwh": 9.21,
+        "cost_eur": 4.21,
+        "cheapest_window": {
+          "start": "02:00",
+          "end": "04:00",
+          "avg_ct_kwh": 32.22
+        },
+        "sample": true
+      },
+      {
+        "day": "2026-05-06",
+        "kwh": 9.21,
+        "cost_eur": 4.21,
+        "cheapest_window": {
+          "start": "02:00",
+          "end": "04:00",
+          "avg_ct_kwh": 32.22
+        },
+        "sample": true
+      },
+      {
+        "day": "2026-05-07",
+        "kwh": 9.21,
+        "cost_eur": 4.21,
+        "cheapest_window": {
+          "start": "02:00",
+          "end": "04:00",
+          "avg_ct_kwh": 32.22
+        },
+        "sample": true
+      },
+      {
+        "day": "2026-05-08",
+        "kwh": 9.21,
+        "cost_eur": 4.21,
+        "cheapest_window": {
+          "start": "02:00",
+          "end": "04:00",
+          "avg_ct_kwh": 32.22
+        },
+        "sample": true
+      },
+      {
+        "day": "2026-05-09",
+        "kwh": 10.59,
+        "cost_eur": 4.88,
+        "cheapest_window": {
+          "start": "02:00",
+          "end": "04:00",
+          "avg_ct_kwh": 32.22
+        },
+        "sample": true
+      },
+      {
+        "day": "2026-05-10",
+        "kwh": 10.81,
+        "cost_eur": 4.99,
+        "cheapest_window": {
+          "start": "02:00",
+          "end": "04:00",
+          "avg_ct_kwh": 32.22
+        },
+        "sample": true
+      },
+      {
+        "day": "2026-05-11",
+        "kwh": 9.21,
+        "cost_eur": 4.21,
+        "cheapest_window": {
+          "start": "02:00",
+          "end": "04:00",
+          "avg_ct_kwh": 32.22
+        },
+        "sample": true
+      },
+      {
+        "day": "2026-05-12",
+        "kwh": 9.21,
+        "cost_eur": 4.21,
+        "cheapest_window": {
+          "start": "02:00",
+          "end": "04:00",
+          "avg_ct_kwh": 32.22
+        },
+        "sample": true
+      },
+      {
+        "day": "2026-05-13",
+        "kwh": 9.21,
+        "cost_eur": 4.21,
+        "cheapest_window": {
+          "start": "02:00",
+          "end": "04:00",
+          "avg_ct_kwh": 32.22
+        },
+        "sample": true
+      },
+      {
+        "day": "2026-05-14",
+        "kwh": 9.21,
+        "cost_eur": 4.21,
+        "cheapest_window": {
+          "start": "02:00",
+          "end": "04:00",
+          "avg_ct_kwh": 32.22
+        },
+        "sample": true
+      },
+      {
+        "day": "2026-05-15",
+        "kwh": 9.21,
+        "cost_eur": 4.21,
+        "cheapest_window": {
+          "start": "02:00",
+          "end": "04:00",
+          "avg_ct_kwh": 32.22
+        },
+        "sample": true
+      },
+      {
+        "day": "2026-05-16",
+        "kwh": 10.59,
+        "cost_eur": 4.88,
+        "cheapest_window": {
+          "start": "02:00",
+          "end": "04:00",
+          "avg_ct_kwh": 32.22
+        },
+        "sample": true
+      },
+      {
+        "day": "2026-05-17",
+        "kwh": 10.81,
+        "cost_eur": 4.99,
+        "cheapest_window": {
+          "start": "02:00",
+          "end": "04:00",
+          "avg_ct_kwh": 32.22
+        },
+        "sample": true
+      },
+      {
+        "day": "2026-05-18",
+        "kwh": 9.21,
+        "cost_eur": 4.21,
+        "cheapest_window": {
+          "start": "02:00",
+          "end": "04:00",
+          "avg_ct_kwh": 32.22
+        },
+        "sample": true
+      },
+      {
+        "day": "2026-05-19",
+        "kwh": 9.21,
+        "cost_eur": 4.21,
+        "cheapest_window": {
+          "start": "02:00",
+          "end": "04:00",
+          "avg_ct_kwh": 32.22
+        },
+        "sample": true
+      },
+      {
+        "day": "2026-05-20",
+        "kwh": 9.21,
+        "cost_eur": 4.21,
+        "cheapest_window": {
+          "start": "02:00",
+          "end": "04:00",
+          "avg_ct_kwh": 32.22
+        },
+        "sample": true
+      },
+      {
+        "day": "2026-05-21",
+        "kwh": 9.21,
+        "cost_eur": 4.21,
+        "cheapest_window": {
+          "start": "02:00",
+          "end": "04:00",
+          "avg_ct_kwh": 32.22
+        },
+        "sample": true
+      },
+      {
+        "day": "2026-05-22",
+        "kwh": 9.21,
+        "cost_eur": 4.21,
+        "cheapest_window": {
+          "start": "02:00",
+          "end": "04:00",
+          "avg_ct_kwh": 32.22
+        },
+        "sample": true
+      },
+      {
+        "day": "2026-05-23",
+        "kwh": 10.59,
+        "cost_eur": 4.88,
+        "cheapest_window": {
+          "start": "02:00",
+          "end": "04:00",
+          "avg_ct_kwh": 32.22
+        },
+        "sample": true
+      },
+      {
+        "day": "2026-05-24",
+        "kwh": 10.81,
+        "cost_eur": 4.99,
+        "cheapest_window": {
+          "start": "02:00",
+          "end": "04:00",
+          "avg_ct_kwh": 32.22
+        },
+        "sample": true
+      },
+      {
+        "day": "2026-05-25",
+        "kwh": 9.21,
+        "cost_eur": 4.21,
+        "cheapest_window": {
+          "start": "02:00",
+          "end": "04:00",
+          "avg_ct_kwh": 32.22
+        },
+        "sample": true
+      },
+      {
+        "day": "2026-05-26",
+        "kwh": 9.21,
+        "cost_eur": 4.21,
+        "cheapest_window": {
+          "start": "02:00",
+          "end": "04:00",
+          "avg_ct_kwh": 32.22
+        },
+        "sample": true
+      },
+      {
+        "day": "2026-05-27",
+        "kwh": 9.21,
+        "cost_eur": 4.21,
+        "cheapest_window": {
+          "start": "02:00",
+          "end": "04:00",
+          "avg_ct_kwh": 32.22
+        },
+        "sample": true
+      },
+      {
+        "day": "2026-05-28",
+        "kwh": 9.21,
+        "cost_eur": 4.21,
+        "cheapest_window": {
+          "start": "02:00",
+          "end": "04:00",
+          "avg_ct_kwh": 32.22
+        },
+        "sample": true
+      },
+      {
+        "day": "2026-05-29",
+        "kwh": 9.21,
+        "cost_eur": 4.21,
+        "cheapest_window": {
+          "start": "02:00",
+          "end": "04:00",
+          "avg_ct_kwh": 32.22
+        },
+        "sample": true
+      },
+      {
+        "day": "2026-05-30",
+        "kwh": 10.59,
+        "cost_eur": 4.88,
+        "cheapest_window": {
+          "start": "02:00",
+          "end": "04:00",
+          "avg_ct_kwh": 32.22
+        },
+        "sample": true
+      },
+      {
+        "day": "2026-05-31",
+        "kwh": 10.81,
+        "cost_eur": 4.99,
+        "cheapest_window": {
+          "start": "02:00",
+          "end": "04:00",
+          "avg_ct_kwh": 32.22
+        },
+        "sample": true
+      }
+    ],
+    "total_kwh": 300.41,
+    "total_cost_eur": 135.52,
+    "savings_eur": -15.36,
+    "flat_ct_kwh": 40.0,
+    "worst_hour": {
+      "day": "2026-05-02",
+      "hour": 17,
+      "price_ct_kwh": 59.17
+    },
+    "sample_days": 30,
+    "assumptions": [
+      "Jahresverbrauch 3500 kWh auf H25-Profilbasis.",
+      "Vergleichstarif 40.00 ct/kWh, Annahme.",
+      "Stundenpreise; die Abrechnung erfolgt viertelstündlich."
+    ]
+  },
+  "illustration_data_url": null
+}

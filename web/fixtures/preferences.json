@@ -1,0 +1,6 @@
+{
+  "household_id": "demo-haushalt",
+  "preferences": {
+    "night_shift": true
+  }
+}

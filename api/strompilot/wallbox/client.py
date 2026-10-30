@@ -111,6 +111,8 @@ def _text_payload(result: types.CallToolResult) -> dict[str, Any]:
 class WallboxDriver(Protocol):
     """One programmable wallbox, real client or fake."""
 
+    def status(self) -> WallboxStatus: ...
+
     def program(self, start_iso: str, end_iso: str, max_kw: float) -> WallboxStatus: ...
 
 

@@ -1,8 +1,13 @@
 """Strompilot FastAPI application."""
 
+import base64
+import hashlib
 import os
+import re
+import time
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from functools import partial
 from pathlib import Path
@@ -10,7 +15,16 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import (
+    BackgroundTasks,
+    Depends,
+    FastAPI,
+    File,
+    HTTPException,
+    Query,
+    UploadFile,
+)
+from fastapi.responses import StreamingResponse
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph.state import CompiledStateGraph
@@ -26,9 +40,9 @@ from strompilot.flexalarm.models import Alert, WatchReport
 from strompilot.flexalarm.store import AlertStore
 from strompilot.learning.models import Feedback, LearningError, Verdict
 from strompilot.learning.update import LEARNED_KEY, update_from_feedback
-from strompilot.lifeplan.loaders import load_price_bars
-from strompilot.lifeplan.schemas import DeviceConstraint
-from strompilot.llm.types import LlmError
+from strompilot.lifeplan.loaders import PriceLoader, load_price_bars
+from strompilot.lifeplan.schemas import DeviceConstraint, PriceBar
+from strompilot.llm.types import ChatRouter, LlmError
 from strompilot.memory.models import Episode, MemoryError, Preference
 from strompilot.memory.store import MemoryStore
 from strompilot.metervision.calibrate import FALLBACK_ANNUAL_KWH, calibrate
@@ -44,7 +58,17 @@ from strompilot.metervision.sam import SamClient
 from strompilot.metervision.store import MeterStore
 from strompilot.prices.models import BERLIN, PriceSeries
 from strompilot.prices.service import get_day_ahead_prices
+from strompilot.report.images import ImageClient
+from strompilot.report.monthly import MonthlyReport, art_prompt, build_month
 from strompilot.tariff.defaults import DEFAULTS
+from strompilot.wallbox.client import (
+    WallboxClient,
+    WallboxDriver,
+    WallboxError,
+    WallboxStatus,
+    iso_window,
+)
+from strompilot.wallbox.policy import ChargePolicy, authorize
 
 load_dotenv()
 
@@ -429,9 +453,14 @@ _MAX_PHOTO_BYTES = 10 * 1024 * 1024
 def propose_reading(
     household_id: str,
     file: UploadFile = File(...),
+    keep_photo: bool = False,
     vision: MeterVision = Depends(get_meter_vision),
 ) -> MeterReading:
-    """Read one meter photo into a proposed reading."""
+    """Read one meter photo into a proposed reading.
+
+    Photos are processed in memory and never stored unless keep_photo
+    is set with explicit household consent.
+    """
     if not household_id.strip():
         raise HTTPException(status_code=422, detail="household_id must not be blank")
     mime = file.content_type or ""
@@ -447,10 +476,13 @@ def propose_reading(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except LlmError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    photos = _photos_dir()
-    photos.mkdir(parents=True, exist_ok=True)
-    photo_path = photos / f"{uuid.uuid4().hex}.{extension}"
-    photo_path.write_bytes(photo)
+    photo_name = ""
+    if keep_photo:
+        photos = _photos_dir()
+        photos.mkdir(parents=True, exist_ok=True)
+        photo_path = photos / f"{uuid.uuid4().hex}.{extension}"
+        photo_path.write_bytes(photo)
+        photo_name = photo_path.name
     try:
         reading = MeterStore(_memory_db()).propose(
             household_id=household_id,
@@ -463,11 +495,11 @@ def propose_reading(
                 if proposal.sam_box
                 else None
             ),
-            photo_path=str(photo_path),
+            photo_path=photo_name,
         )
     except MeterError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return reading.model_copy(update={"photo_path": photo_path.name})
+    return reading
 
 
 @app.get("/meter/readings", response_model=ReadingsResponse)
@@ -598,3 +630,340 @@ def read_feedback(
     except MemoryError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return FeedbackListResponse(household_id=household_id, feedback=episodes)
+
+
+class MonthlyReportResponse(BaseModel):
+    """One monthly report plus its cached illustration, if any."""
+
+    report: MonthlyReport
+    illustration_data_url: str | None
+
+
+class IllustrationResponse(BaseModel):
+    """One report illustration with its cache state."""
+
+    month: str
+    illustration_data_url: str
+    cached: bool
+
+
+def get_image_client() -> ImageClient:
+    """Build the production image client for one request."""
+    meta_key = os.environ.get("META_API_KEY", "")
+    if not meta_key:
+        raise HTTPException(status_code=500, detail="model keys missing")
+    return ImageClient(meta_key)
+
+
+def _art_dir() -> Path:
+    """Return the report art directory, honoring REPORT_ART_DIR."""
+    override = os.environ.get("REPORT_ART_DIR")
+    if override:
+        return Path(override)
+    return Path(__file__).resolve().parent.parent.parent / "data" / "report_art"
+
+
+def _art_path(household_id: str, month: str) -> Path:
+    """Return the cached art file, keyed by household hash."""
+    digest = hashlib.sha1(household_id.encode("utf-8")).hexdigest()[:16]
+    return _art_dir() / digest / f"{month}.png"
+
+
+def _checked_month(month: str) -> tuple[int, int]:
+    """Parse YYYY-MM, rejecting bad formats and future months."""
+    match = re.match(r"^(19|20)\d\d-(0[1-9]|1[0-2])$", month)
+    if match is None:
+        raise HTTPException(status_code=422, detail="month must be YYYY-MM")
+    today = datetime.now(BERLIN).date()
+    if month > today.strftime("%Y-%m"):
+        raise HTTPException(status_code=422, detail="month must not be future")
+    return int(month[0:4]), int(month[5:7])
+
+
+def _month_loader(day: date) -> tuple[list[PriceBar], bool]:
+    """Load one day of all-in bars, flagging sample fallback."""
+    loaded = load_price_bars(day, _cache_dir(), datetime.now(UTC), DEFAULTS)
+    return loaded.bars, loaded.source == "sample"
+
+
+@app.get("/report/monthly", response_model=MonthlyReportResponse)
+def read_monthly_report(
+    household_id: str,
+    month: str,
+    flat_ct_kwh: float = Query(default=40.0, gt=0),
+) -> MonthlyReportResponse:
+    """Build one month of priced background use with savings."""
+    if not household_id.strip():
+        raise HTTPException(status_code=422, detail="household_id must not be blank")
+    year, month_number = _checked_month(month)
+    annual = _annual_pref(_store(), household_id)
+    report = build_month(year, month_number, annual, _month_loader, flat_ct_kwh)
+    art = _art_path(household_id, month)
+    illustration = None
+    if art.exists():
+        illustration = "data:image/png;base64," + base64.b64encode(
+            art.read_bytes()
+        ).decode("ascii")
+    return MonthlyReportResponse(report=report, illustration_data_url=illustration)
+
+
+@app.post("/report/monthly/illustration", response_model=IllustrationResponse)
+def make_illustration(
+    household_id: str,
+    month: str,
+    images: ImageClient = Depends(get_image_client),
+) -> IllustrationResponse:
+    """Generate or return the cached cover art for one month."""
+    if not household_id.strip():
+        raise HTTPException(status_code=422, detail="household_id must not be blank")
+    _checked_month(month)
+    art = _art_path(household_id, month)
+    if art.exists():
+        cached = True
+    else:
+        try:
+            art.parent.mkdir(parents=True, exist_ok=True)
+            art.write_bytes(images.generate(art_prompt(month)))
+        except LlmError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        cached = False
+    illustration = "data:image/png;base64," + base64.b64encode(art.read_bytes()).decode(
+        "ascii"
+    )
+    return IllustrationResponse(
+        month=month, illustration_data_url=illustration, cached=cached
+    )
+
+
+@dataclass(frozen=True)
+class PlanRunner:
+    """One request's planning deps: router, loader, stores, wallbox."""
+
+    router: ChatRouter
+    loader_for: Callable[[date], PriceLoader]
+    threads_db: Path
+    memory: MemoryStore
+    wallbox: WallboxDriver
+
+
+_PLAN_ERRORS: dict[str, str] = {}
+
+
+def get_plan_runner() -> PlanRunner:
+    """Build the production planning deps for one request."""
+    meta_key = os.environ.get("META_API_KEY", "")
+    baseten_key = os.environ.get("BASETEN_API_KEY", "")
+    if not meta_key or not baseten_key:
+        raise HTTPException(status_code=500, detail="model keys missing")
+    cache_dir = _cache_dir()
+    now = datetime.now(UTC)
+    return PlanRunner(
+        router=ModelRouter.from_keys(meta_key, baseten_key),
+        loader_for=lambda day: partial(load_price_bars, day, cache_dir, now, DEFAULTS),
+        threads_db=_threads_db(),
+        memory=_store(),
+        wallbox=WallboxClient(),
+    )
+
+
+class PlanBody(BaseModel):
+    """One planning request from the UI."""
+
+    household_id: str
+    text: str
+    plan_day: date | None = None
+
+
+class PlanCreated(BaseModel):
+    """One accepted planning run."""
+
+    thread_id: str
+    status: str
+
+
+class PlanDetail(BaseModel):
+    """One thread's plan state for the UI."""
+
+    thread_id: str
+    status: str
+    schedule: list[dict[str, Any]] | None = None
+    narration: str | None = None
+    citations: list[dict[str, Any]] | None = None
+    total_cost_eur: float | None = None
+    error: str | None = None
+    audit: list[str] = []
+
+
+def _run_plan_to_pause(
+    runner: PlanRunner, thread_id: str, household_id: str, text: str, plan_day: date
+) -> None:
+    """Run one thread to its approval pause, recording failures."""
+    try:
+        with SqliteSaver.from_conn_string(str(runner.threads_db)) as saver:
+            graph = build_graph(
+                runner.router,
+                runner.loader_for(plan_day),
+                checkpointer=saver,
+                memory=runner.memory,
+                wallbox=runner.wallbox,
+            )
+            graph.invoke(
+                {
+                    "request": text,
+                    "household_id": household_id,
+                    "plan_day": plan_day.isoformat(),
+                    "approval": "pending",
+                },
+                _thread_config(thread_id),
+            )
+    except Exception as exc:
+        _PLAN_ERRORS[thread_id] = str(exc)
+
+
+@app.post("/plan", response_model=PlanCreated, status_code=202)
+def start_plan(
+    body: PlanBody,
+    background: BackgroundTasks,
+    runner: PlanRunner = Depends(get_plan_runner),
+) -> PlanCreated:
+    """Start one planning run in the background."""
+    if not body.household_id.strip():
+        raise HTTPException(status_code=422, detail="household_id must not be blank")
+    if not body.text.strip():
+        raise HTTPException(status_code=422, detail="text must not be blank")
+    thread_id = uuid.uuid4().hex
+    plan_day = body.plan_day or datetime.now(BERLIN).date() + timedelta(days=1)
+    background.add_task(
+        _run_plan_to_pause, runner, thread_id, body.household_id, body.text, plan_day
+    )
+    return PlanCreated(thread_id=thread_id, status="running")
+
+
+@app.get("/plan/{thread_id}", response_model=PlanDetail)
+def read_plan(
+    thread_id: str, runner: PlanRunner = Depends(get_plan_runner)
+) -> PlanDetail:
+    """Read one thread's plan state."""
+    if thread_id in _PLAN_ERRORS:
+        raise HTTPException(status_code=500, detail=_PLAN_ERRORS[thread_id])
+    try:
+        with SqliteSaver.from_conn_string(str(runner.threads_db)) as saver:
+            snapshot = saver.get_tuple(_thread_config(thread_id))
+            if snapshot is None:
+                raise HTTPException(status_code=404, detail="unknown thread")
+            values = snapshot.checkpoint["channel_values"]
+            if not isinstance(values, dict):
+                raise HTTPException(status_code=500, detail="unreadable thread")
+            graph = build_graph(
+                runner.router,
+                runner.loader_for(datetime.now(BERLIN).date()),
+                checkpointer=saver,
+                memory=runner.memory,
+                wallbox=runner.wallbox,
+            )
+            status = _read_status(thread_id, graph).status
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail="unknown thread") from exc
+    audit = values.get("audit", [])
+    return PlanDetail(
+        thread_id=thread_id,
+        status=status,
+        schedule=values.get("schedule"),
+        narration=values.get("narration"),
+        citations=values.get("citations"),
+        total_cost_eur=values.get("total_cost_eur"),
+        error=values.get("error"),
+        audit=[str(event) for event in audit] if isinstance(audit, list) else [],
+    )
+
+
+def _trace_events(thread_id: str, runner: PlanRunner) -> Iterator[str]:
+    """Yield new audit lines until the thread settles or time runs out."""
+    with SqliteSaver.from_conn_string(str(runner.threads_db)) as saver:
+        graph = build_graph(
+            runner.router,
+            runner.loader_for(datetime.now(BERLIN).date()),
+            checkpointer=saver,
+            memory=runner.memory,
+            wallbox=runner.wallbox,
+        )
+        seen = 0
+        for _ in range(150):
+            try:
+                snapshot = graph.get_state(_thread_config(thread_id))
+                status = _read_status(thread_id, graph).status
+            except HTTPException:
+                return
+            values = snapshot.values if isinstance(snapshot.values, dict) else {}
+            audit = values.get("audit", [])
+            lines = [str(event) for event in audit] if isinstance(audit, list) else []
+            for line in lines[seen:]:
+                yield f"data: {line}\n\n"
+            seen = len(lines)
+            if status in ("published", "done", "blocked"):
+                return
+            time.sleep(0.4)
+
+
+@app.get("/plan/{thread_id}/trace")
+def stream_trace(
+    thread_id: str, runner: PlanRunner = Depends(get_plan_runner)
+) -> StreamingResponse:
+    """Stream one thread's audit trace as server-sent events."""
+    try:
+        with SqliteSaver.from_conn_string(str(runner.threads_db)) as saver:
+            snapshot = saver.get_tuple(_thread_config(thread_id))
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail="unknown thread") from exc
+    if snapshot is None:
+        raise HTTPException(status_code=404, detail="unknown thread")
+    return StreamingResponse(
+        _trace_events(thread_id, runner), media_type="text/event-stream"
+    )
+
+
+def get_wallbox_client() -> WallboxDriver:
+    """Build the wallbox driver for one request (local simulator)."""
+    return WallboxClient()
+
+
+@app.get("/wallbox/status", response_model=WallboxStatus)
+def read_wallbox_status(
+    wallbox: WallboxDriver = Depends(get_wallbox_client),
+) -> WallboxStatus:
+    """Report the wallbox live status."""
+    try:
+        return wallbox.status()
+    except WallboxError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+class ProgramBody(BaseModel):
+    """One manual charge program from the UI."""
+
+    day: date | None = None
+    start: str
+    end: str
+    max_kw: float
+
+
+@app.post("/wallbox/program", response_model=WallboxStatus)
+def program_wallbox(
+    body: ProgramBody,
+    wallbox: WallboxDriver = Depends(get_wallbox_client),
+) -> WallboxStatus:
+    """Program one charge window behind the policy gates."""
+    day = body.day or datetime.now(BERLIN).date()
+    try:
+        start_iso, end_iso = iso_window(day, body.start, body.end)
+    except WallboxError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    decision = authorize(ChargePolicy(), start_iso, end_iso, body.max_kw)
+    if not decision.allowed:
+        raise HTTPException(status_code=422, detail=decision.reason)
+    try:
+        return wallbox.program(start_iso, end_iso, body.max_kw)
+    except WallboxError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc

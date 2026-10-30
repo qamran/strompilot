@@ -172,6 +172,30 @@ def test_proposed_readings_never_enter_math(
     assert calibration["to_reading_id"] == third["id"]
 
 
+def test_photos_not_stored_by_default(
+    meter_setup: tuple[TestClient, Path],
+) -> None:
+    client, tmp_path = meter_setup
+    created = upload(client, png())
+    assert isinstance(created, dict)
+    assert created["photo_path"] == ""
+    assert not (tmp_path / "photos").exists()
+
+
+def test_keep_photo_stores_with_consent(
+    meter_setup: tuple[TestClient, Path],
+) -> None:
+    client, tmp_path = meter_setup
+    response = client.post(
+        "/meter/readings?household_id=h1&keep_photo=true",
+        files={"file": ("meter.png", png(), "image/png")},
+    )
+    assert response.status_code == 200
+    name = response.json()["photo_path"]
+    assert name.endswith(".png")
+    assert (tmp_path / "photos" / name).exists()
+
+
 def test_unknown_reading_returns_404(
     meter_setup: tuple[TestClient, Path],
 ) -> None:

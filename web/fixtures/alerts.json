@@ -1,0 +1,17 @@
+{
+  "household_id": "demo-haushalt",
+  "alerts": [
+    {
+      "id": 1,
+      "household_id": "demo-haushalt",
+      "dedup_key": "cheap-2026-06-01",
+      "kind": "cheap",
+      "title": "Billige Nachtstunden",
+      "body": "02:00 bis 04:00 Uhr kosten unter 15 ct/kWh.",
+      "status": "delivered",
+      "channel": null,
+      "reason": "scanner",
+      "created_at": "2026-10-30T00:11:41.051199Z"
+    }
+  ]
+}

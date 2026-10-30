@@ -1,69 +1,131 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+/** Preise view: sentence-to-plan entry, heatmap, savings, wallbox strip. */
+
+import { useEffect, useState, type FormEvent } from "react";
+import { useRouter } from "next/navigation";
+import {
+  fetchMonthlyReport,
+  fetchPrices,
+  fetchWallbox,
+  startPlan,
+} from "../lib/api";
+import type { DayAheadPriceSeries } from "../lib/prices";
+import type { WallboxStatus } from "../lib/wallbox";
+import { useLang } from "../lib/i18n";
+import { formatCt } from "../lib/format";
+import Heatmap from "../components/Heatmap";
+import Odometer from "../components/Odometer";
+import SourceChip from "../components/SourceChip";
+import GlassBox from "../components/GlassBox";
+import ConsentGate from "../components/ConsentGate";
+
+function currentMonth(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+}
+
+export default function PricesPage() {
+  const { t, lang } = useLang();
+  const router = useRouter();
+  const [series, setSeries] = useState<DayAheadPriceSeries | null>(null);
+  const [savings, setSavings] = useState(0);
+  const [wallbox, setWallbox] = useState<WallboxStatus | null>(null);
+  const [text, setText] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    fetchPrices()
+      .then(setSeries)
+      .catch((err: unknown) =>
+        setError(err instanceof Error ? err.message : String(err)),
+      );
+    fetchMonthlyReport(currentMonth())
+      .then((res) => setSavings(res.report.savings_eur))
+      .catch(() => setSavings(0));
+    fetchWallbox()
+      .then(setWallbox)
+      .catch(() => setWallbox(null));
+  }, []);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (!text.trim()) return;
+    try {
+      const created = await startPlan(text.trim());
+      router.push(`/fahrplan?thread=${encodeURIComponent(created.thread_id)}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  const avg =
+    series && series.prices.length > 0
+      ? series.prices.reduce((sum, p) => sum + p.eur_per_mwh, 0) /
+        series.prices.length /
+        10
+      : 0;
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+    <>
+      <section className="panel">
+        <p className="muted">{t.tagline}</p>
+        <ConsentGate text={t.consentPlan}>
+          {() => (
+            <form className="plan-form" onSubmit={submit}>
+              <input
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                placeholder={t.planPlaceholder}
+                aria-label={t.planButton}
+              />
+              <button type="submit">{t.planButton}</button>
+            </form>
+          )}
+        </ConsentGate>
+        <p className="muted">{t.planHint}</p>
+        {error && <p className="error">{error}</p>}
+      </section>
+
+      <section className="panel">
+        <h2>
+          {t.today}
+          {series && <SourceChip source={series.source} />}
+        </h2>
+        {series && <Heatmap series={series} />}
+        {series && (
+          <GlassBox
+            label={t.avg}
+            value={`${formatCt(avg, lang)}/kWh`}
+            formula="Ø = Σ Preis(h) / 24"
+            source={series.attribution}
+          />
+        )}
+        <p className="muted">{t.quarterHourNote}</p>
+      </section>
+
+      <section className="panel">
+        <h2>
+          {t.savingsMonth} <Odometer value={savings} />
+          {t.perMonth}
+        </h2>
+        <p className="muted">{t.estimateLabel}</p>
+      </section>
+
+      {wallbox && (
+        <section className="panel">
+          <h2>{t.wallbox}</h2>
+          <p>
+            {!wallbox.plugged && t.unplugged}
+            {wallbox.plugged &&
+              (wallbox.charging
+                ? `${t.charging} ${wallbox.power_kw} kW`
+                : t.idle)}
+            {wallbox.plugged &&
+              ` · ${wallbox.session_kwh.toFixed(1)} kWh ${t.today.toLowerCase()}`}
           </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+        </section>
+      )}
+    </>
   );
 }

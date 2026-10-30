@@ -1,0 +1,42 @@
+{
+  "thread_id": "d384054ae83847a4836cef514454a5d8",
+  "status": "paused",
+  "schedule": [
+    {
+      "device": "Waschmaschine",
+      "start": "02:00",
+      "end": "04:00",
+      "reason": "Günstigste Stunden im Fenster (Ø 15.00 ct/kWh)",
+      "energy_kwh": 4.0,
+      "price_ct_kwh": 15.0,
+      "cost_eur": 0.6
+    }
+  ],
+  "narration": "Die Waschmaschine läuft von 02:00 bis 04:00 Uhr und kostet 0,60 €. Die Gesamtkosten betragen 0,60 €.",
+  "citations": [
+    {
+      "claim": "Waschmaschine läuft 02:00 bis 04:00",
+      "source": "day-ahead",
+      "detail": "Ø 15,00 ct/kWh all-in (test)"
+    },
+    {
+      "claim": "Gesamtkosten 0,60 Euro",
+      "source": "tariff",
+      "detail": "all-in inkl. Umlagen und MwSt"
+    },
+    {
+      "claim": "Waschmaschine flexibel 00:00 bis 23:00",
+      "source": "household",
+      "detail": "Zeitfenster aus Haushaltsangabe"
+    }
+  ],
+  "total_cost_eur": 0.6,
+  "error": null,
+  "audit": [
+    "2026-10-30T00:11:41+00:00 perceive: intent=plan",
+    "2026-10-30T00:11:41+00:00 analyst: 1 facts, 1 devices",
+    "2026-10-30T00:11:41+00:00 scheduler: 1 slots, 0.60 Euro, 0 gaps",
+    "2026-10-30T00:11:41+00:00 explainer: 3 citations, 0 violations",
+    "2026-10-30T00:11:41+00:00 critic: approved"
+  ]
+}

@@ -138,6 +138,12 @@ class FakeWallbox:
     def __init__(self, script: list[WallboxStatus | Exception]) -> None:
         self._script = list(script)
         self.programs: list[tuple[str, str, float]] = []
+        self.status_calls = 0
+
+    def status(self) -> WallboxStatus:
+        """Return an idle status, counting status polls."""
+        self.status_calls += 1
+        return idle_wallbox_status()
 
     def program(self, start_iso: str, end_iso: str, max_kw: float) -> WallboxStatus:
         """Record one programmed window or raise the scripted error."""
