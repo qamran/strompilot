@@ -24,6 +24,7 @@ from fastapi import (
     Query,
     UploadFile,
 )
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.sqlite import SqliteSaver
@@ -73,6 +74,21 @@ from strompilot.wallbox.policy import ChargePolicy, authorize
 load_dotenv()
 
 app = FastAPI(title="Strompilot API", version="0.1.0")
+
+# The browser Leitstand reads the API cross-origin (web port vs API
+# port), so the local frontend origins are allowed explicitly. Nothing
+# else gets CORS headers. SP-15 revisits this for hosted auth.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://127.0.0.1:3000",
+        "http://localhost:3000",
+        "http://127.0.0.1:3100",
+        "http://localhost:3100",
+    ],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/health", response_model=HealthResponse)
