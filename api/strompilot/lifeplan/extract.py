@@ -12,7 +12,8 @@ from strompilot.safety import quote_user_text
 
 from .schemas import HouseholdConstraints
 
-ANALYZE_TOKENS = 1200
+# 1200 truncated a real three-clause input after 1198 thinking tokens.
+ANALYZE_TOKENS = 2000
 ANALYZE_TEMPERATURE = 0.0
 
 _SYSTEM = """You extract household power constraints for a German energy planner.

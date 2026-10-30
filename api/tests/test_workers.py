@@ -45,6 +45,29 @@ def test_perceive_quotes_request() -> None:
     assert "<household_text>" in prompt
 
 
+def test_perceive_budgets_enough_tokens_to_answer() -> None:
+    """100 tokens starved the model into null content on real runs."""
+    router = FakeRouter({"supervisor": [reply("plan")]})
+    perceive_node(PlanState(request="plane"), router)
+    assert router.budgets[0] >= 1000
+
+
+def test_perceive_pins_temperature_for_reliability() -> None:
+    """Classification is deterministic work, like extraction."""
+    router = FakeRouter({"supervisor": [reply("plan")]})
+    perceive_node(PlanState(request="plane"), router)
+    assert router.temps == [0.0]
+
+
+def test_perceive_prompt_shows_planning_examples() -> None:
+    """The canonical night-shift text must read as planning, not other."""
+    router = FakeRouter({"supervisor": [reply("plan")]})
+    perceive_node(PlanState(request="plane"), router)
+    (prompt,) = router.prompts
+    assert "Nachtschicht" in prompt
+    assert "Witz" in prompt
+
+
 def test_analyst_extracts_facts_and_constraints() -> None:
     router = FakeRouter({"analyst": [reply(ANALYST_JSON)]})
     update = analyst_node(PlanState(request="plane"), router)

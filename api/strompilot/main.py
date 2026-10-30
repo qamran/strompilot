@@ -2,8 +2,10 @@
 
 import base64
 import hashlib
+import logging
 import os
 import re
+import sqlite3
 import time
 import uuid
 from collections.abc import Callable, Iterator
@@ -72,6 +74,8 @@ from strompilot.wallbox.client import (
 from strompilot.wallbox.policy import ChargePolicy, authorize
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Strompilot API", version="0.1.0")
 
@@ -762,7 +766,38 @@ class PlanRunner:
     wallbox: WallboxDriver
 
 
-_PLAN_ERRORS: dict[str, str] = {}
+def record_run_error(threads_db: Path, thread_id: str, message: str) -> None:
+    """Persist one background-run crash beside the checkpoints."""
+    conn = sqlite3.connect(threads_db)
+    try:
+        with conn:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS run_errors "
+                "(thread_id TEXT PRIMARY KEY, message TEXT NOT NULL)"
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO run_errors (thread_id, message) VALUES (?, ?)",
+                (thread_id, message),
+            )
+    finally:
+        conn.close()
+
+
+def read_run_error(threads_db: Path, thread_id: str) -> str | None:
+    """Read one recorded crash, or None when the run never crashed."""
+    if not threads_db.exists():
+        return None
+    conn = sqlite3.connect(threads_db)
+    try:
+        row = conn.execute(
+            "SELECT message FROM run_errors WHERE thread_id = ?",
+            (thread_id,),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    finally:
+        conn.close()
+    return str(row[0]) if row else None
 
 
 def get_plan_runner() -> PlanRunner:
@@ -833,7 +868,8 @@ def _run_plan_to_pause(
                 _thread_config(thread_id),
             )
     except Exception as exc:
-        _PLAN_ERRORS[thread_id] = str(exc)
+        record_run_error(runner.threads_db, thread_id, str(exc))
+        logger.exception("plan run %s failed", thread_id)
 
 
 @app.post("/plan", response_model=PlanCreated, status_code=202)
@@ -860,24 +896,29 @@ def read_plan(
     thread_id: str, runner: PlanRunner = Depends(get_plan_runner)
 ) -> PlanDetail:
     """Read one thread's plan state."""
-    if thread_id in _PLAN_ERRORS:
-        raise HTTPException(status_code=500, detail=_PLAN_ERRORS[thread_id])
+    recorded = read_run_error(runner.threads_db, thread_id)
     try:
         with SqliteSaver.from_conn_string(str(runner.threads_db)) as saver:
             snapshot = saver.get_tuple(_thread_config(thread_id))
             if snapshot is None:
-                raise HTTPException(status_code=404, detail="unknown thread")
-            values = snapshot.checkpoint["channel_values"]
-            if not isinstance(values, dict):
-                raise HTTPException(status_code=500, detail="unreadable thread")
-            graph = build_graph(
-                runner.router,
-                runner.loader_for(datetime.now(BERLIN).date()),
-                checkpointer=saver,
-                memory=runner.memory,
-                wallbox=runner.wallbox,
-            )
-            status = _read_status(thread_id, graph).status
+                if recorded is None:
+                    raise HTTPException(status_code=404, detail="unknown thread")
+                values: dict[str, Any] = {}
+                status = "blocked"
+            else:
+                values = snapshot.checkpoint["channel_values"]
+                if not isinstance(values, dict):
+                    raise HTTPException(status_code=500, detail="unreadable thread")
+                graph = build_graph(
+                    runner.router,
+                    runner.loader_for(datetime.now(BERLIN).date()),
+                    checkpointer=saver,
+                    memory=runner.memory,
+                    wallbox=runner.wallbox,
+                )
+                status = _read_status(thread_id, graph).status
+                if recorded is not None:
+                    status = "blocked"
     except HTTPException:
         raise
     except Exception as exc:
@@ -890,7 +931,7 @@ def read_plan(
         narration=values.get("narration"),
         citations=values.get("citations"),
         total_cost_eur=values.get("total_cost_eur"),
-        error=values.get("error"),
+        error=recorded if recorded is not None else values.get("error"),
         audit=[str(event) for event in audit] if isinstance(audit, list) else [],
     )
 

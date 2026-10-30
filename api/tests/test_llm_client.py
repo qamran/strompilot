@@ -316,3 +316,156 @@ def test_chat_serializes_image_parts(monkeypatch: pytest.MonkeyPatch) -> None:
             ],
         }
     ]
+
+
+def test_chat_retries_once_on_null_content(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One flaky null body is retried; the answer still lands."""
+    calls = 0
+
+    class FakeResponse:
+        status_code = 200
+
+        def __init__(self, content: object) -> None:
+            self._content = content
+
+        def json(self) -> dict[str, object]:
+            return {"choices": [{"message": {"content": self._content}}]}
+
+    def fake_post(
+        url: str, headers: dict[str, str], json: dict[str, object], timeout: float
+    ) -> FakeResponse:
+        nonlocal calls
+        del url, headers, json, timeout
+        calls += 1
+        if calls == 1:
+            return FakeResponse(None)
+        return FakeResponse("plan")
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    client = ChatClient(META_BASE_URL, "test-key", SPARK_MODEL)
+    result = client.chat([Message(role="user", content="hi")], max_tokens=100)
+    assert result.content == "plan"
+    assert calls == 2
+
+
+def test_chat_gives_up_after_second_null(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two null bodies in a row still fail loudly, not silently."""
+    calls = 0
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self) -> dict[str, object]:
+            return {"choices": [{"message": {"content": None}}]}
+
+    def fake_post(
+        url: str, headers: dict[str, str], json: dict[str, object], timeout: float
+    ) -> FakeResponse:
+        nonlocal calls
+        del url, headers, json, timeout
+        calls += 1
+        return FakeResponse()
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    client = ChatClient(META_BASE_URL, "test-key", SPARK_MODEL)
+    with pytest.raises(LlmError, match="unreadable"):
+        client.chat([Message(role="user", content="hi")], max_tokens=100)
+    assert calls == 2
+
+
+def test_chat_doubles_budget_on_truncation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A length-cut answer retries once with twice the budget."""
+    budgets: list[object] = []
+
+    class Truncated:
+        status_code = 200
+
+        def json(self) -> dict[str, object]:
+            return {
+                "choices": [
+                    {
+                        "finish_reason": "length",
+                        "message": {"content": None},
+                    }
+                ],
+                "usage": {
+                    "completion_tokens": 100,
+                    "completion_tokens_details": {"reasoning_tokens": 99},
+                },
+            }
+
+    class Good:
+        status_code = 200
+
+        def json(self) -> dict[str, object]:
+            return {
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {"content": "plan"},
+                    }
+                ]
+            }
+
+    def fake_post(
+        url: str, headers: dict[str, str], json: dict[str, object], timeout: float
+    ) -> object:
+        del url, headers, timeout
+        budgets.append(json["max_tokens"])
+        if len(budgets) == 1:
+            return Truncated()
+        return Good()
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    client = ChatClient(META_BASE_URL, "test-key", SPARK_MODEL)
+    result = client.chat([Message(role="user", content="hi")], max_tokens=100)
+    assert result.content == "plan"
+    assert budgets == [100, 200]
+
+
+def test_chat_reports_truncation_details_when_giving_up(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two truncations fail loudly with finish reason and token counts."""
+
+    class Truncated:
+        status_code = 200
+
+        def json(self) -> dict[str, object]:
+            return {
+                "choices": [
+                    {
+                        "finish_reason": "length",
+                        "message": {"content": None},
+                    }
+                ],
+                "usage": {
+                    "completion_tokens": 100,
+                    "completion_tokens_details": {"reasoning_tokens": 99},
+                },
+            }
+
+    def fake_post(
+        url: str, headers: dict[str, str], json: dict[str, object], timeout: float
+    ) -> Truncated:
+        del url, headers, json, timeout
+        return Truncated()
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    client = ChatClient(META_BASE_URL, "test-key", SPARK_MODEL)
+    with pytest.raises(LlmError, match="finish=length"):
+        client.chat([Message(role="user", content="hi")], max_tokens=100)

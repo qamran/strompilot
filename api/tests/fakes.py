@@ -198,6 +198,7 @@ class FakeRouter:
         self.temps: list[float | None] = []
         self.prompts: list[str] = []
         self.messages: list[list[Message]] = []
+        self.budgets: list[int] = []
 
     def chat(
         self,
@@ -207,10 +208,10 @@ class FakeRouter:
         reasoning_effort: str | None = None,
         temperature: float | None = None,
     ) -> ChatResult:
-        del max_tokens
         self.calls.append(worker)
         self.efforts.append(reasoning_effort)
         self.temps.append(temperature)
+        self.budgets.append(max_tokens)
         self.messages.append(messages)
         self.prompts.append(
             "\n".join(f"{message.role}: {message.content}" for message in messages)

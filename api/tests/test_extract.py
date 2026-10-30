@@ -51,6 +51,13 @@ def test_analyze_pins_worker_effort_and_temperature() -> None:
     assert "JSON only" in router.prompts[0]
 
 
+def test_analyze_budgets_for_deep_thinking() -> None:
+    """1200 tokens truncated a real input after 1198 thinking tokens."""
+    router = FakeRouter({"analyst": [reply(VALID)]})
+    analyze("Waschmaschine morgens.", router)
+    assert router.budgets[0] >= 2000
+
+
 def test_analyze_marks_text_as_data_and_ignores_orders() -> None:
     router = FakeRouter({"analyst": [reply(VALID)]})
     analyze("Waschmaschine morgens.", router)

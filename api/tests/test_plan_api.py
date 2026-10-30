@@ -109,6 +109,29 @@ def test_unknown_thread_returns_404(plan_setup: TestClient) -> None:
     assert plan_setup.get("/plan/nope/trace").status_code == 404
 
 
+def test_crashed_run_reads_back_as_blocked_with_error(
+    plan_setup: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A crashing run stays a readable blocked plan, not a 500."""
+    import strompilot.main as main_module
+
+    def boom(*args: object, **kwargs: object) -> object:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(main_module, "build_graph", boom)
+    created = plan_setup.post("/plan", json={"household_id": "h1", "text": "waschen"})
+    thread_id = created.json()["thread_id"]
+    detail = plan_setup.get(f"/plan/{thread_id}")
+    assert detail.status_code == 200
+    payload = detail.json()
+    assert payload["status"] == "blocked"
+    assert "boom" in payload["error"]
+    assert "Traceback" in caplog.text
+    assert thread_id in caplog.text
+
+
 def test_blank_input_rejected(plan_setup: TestClient) -> None:
     assert (
         plan_setup.post("/plan", json={"household_id": " ", "text": "x"}).status_code
