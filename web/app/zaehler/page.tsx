@@ -21,6 +21,7 @@ export default function MeterPage() {
   const [corrected, setCorrected] = useState("");
   const [note, setNote] = useState("");
   const [error, setError] = useState("");
+  const [uploadKey, setUploadKey] = useState(0);
 
   async function load() {
     try {
@@ -43,6 +44,7 @@ export default function MeterPage() {
     try {
       await uploadMeterPhoto(file, keepPhoto);
       setFile(null);
+      setUploadKey((key) => key + 1);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -74,6 +76,7 @@ export default function MeterPage() {
           {() => (
             <>
               <input
+                key={uploadKey}
                 type="file"
                 accept="image/jpeg,image/png,image/webp,image/gif"
                 onChange={(e) => setFile(e.target.files?.[0] ?? null)}

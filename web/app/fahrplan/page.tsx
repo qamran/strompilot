@@ -256,6 +256,8 @@ function FahrplanInner() {
               />
             )}
             {report.illustration_data_url ? (
+              // Data-URL art from the report cache: no optimizer benefit.
+              // eslint-disable-next-line @next/next/no-img-element
               <img
                 className="report-art"
                 src={report.illustration_data_url}
