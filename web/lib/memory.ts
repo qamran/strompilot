@@ -60,6 +60,26 @@ function parseEpisode(value: unknown): MemoryEpisode {
   };
 }
 
+export interface CollapsedEpisodes {
+  episode: MemoryEpisode;
+  count: number;
+}
+
+export function collapseEpisodes(
+  episodes: MemoryEpisode[],
+): CollapsedEpisodes[] {
+  const rows: CollapsedEpisodes[] = [];
+  for (const episode of episodes) {
+    const last = rows[rows.length - 1];
+    if (last && last.episode.text === episode.text) {
+      last.count += 1;
+    } else {
+      rows.push({ episode, count: 1 });
+    }
+  }
+  return rows;
+}
+
 export function parseEpisodesList(value: unknown): EpisodesList {
   if (typeof value !== "object" || value === null) {
     throw new Error("EpisodesList must be an object");

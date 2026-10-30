@@ -8,6 +8,7 @@ import {
   fetchPreferences,
   forgetPreference,
 } from "../lib/api";
+import { collapseEpisodes } from "../lib/memory";
 import type { MemoryEpisode, PreferencesMap } from "../lib/memory";
 import { useLang } from "../lib/i18n";
 
@@ -104,9 +105,12 @@ export default function MemorySidebar() {
         ))}
       </ul>
       <ul>
-        {episodes.map((episode) => (
-          <li key={episode.id} className="muted">
-            {episodeText(episode.text)}
+        {collapseEpisodes(episodes).map((row) => (
+          <li key={row.episode.id} className="muted">
+            {episodeText(row.episode.text)}
+            {row.count > 1 && (
+              <span className="repeat-count"> ×{row.count}</span>
+            )}
           </li>
         ))}
       </ul>

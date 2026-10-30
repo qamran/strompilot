@@ -229,6 +229,11 @@ select {
   padding: 0;
 }
 
+.repeat-count {
+  color: var(--faint);
+  font-size: 0.78rem;
+}
+
 /* ---- panels ---- */
 
 .panel {
