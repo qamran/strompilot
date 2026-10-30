@@ -1,6 +1,6 @@
 "use client";
 
-/** Consent dialog: modal with checkbox plus OK, remembered per session. */
+/** Slim inline consent bar: never blocks the page, remembered per session. */
 
 import { useEffect, useState, type ReactNode } from "react";
 import { useLang } from "../lib/i18n";
@@ -8,10 +8,12 @@ import { useLang } from "../lib/i18n";
 export default function ConsentGate({
   text,
   storageKey,
+  onChange,
   children,
 }: {
   text: string;
   storageKey: string;
+  onChange?: (agreed: boolean) => void;
   children: () => ReactNode;
 }) {
   const { t } = useLang();
@@ -21,34 +23,36 @@ export default function ConsentGate({
   useEffect(() => {
     Promise.resolve(
       sessionStorage.getItem(`strompilot-consent:${storageKey}`) === "1",
-    ).then(setAgreed);
-  }, [storageKey]);
+    ).then((stored) => {
+      setAgreed(stored);
+      onChange?.(stored);
+    });
+  }, [storageKey, onChange]);
 
   function confirm() {
     sessionStorage.setItem(`strompilot-consent:${storageKey}`, "1");
     setAgreed(true);
+    onChange?.(true);
   }
 
-  if (agreed) return <>{children()}</>;
   return (
-    <div className="overlay" role="dialog" aria-label={t.consentTitle}>
-      <div className="overlay-card consent">
-        <h2>{t.consentTitle}</h2>
-        <p>{text}</p>
-        <label>
-          <input
-            type="checkbox"
-            checked={checked}
-            onChange={(event) => setChecked(event.target.checked)}
-          />{" "}
-          {text}
-        </label>
-        <p>
+    <>
+      {!agreed && (
+        <div className="consent-bar" role="region" aria-label={t.consentTitle}>
+          <label>
+            <input
+              type="checkbox"
+              checked={checked}
+              onChange={(event) => setChecked(event.target.checked)}
+            />{" "}
+            {text}
+          </label>
           <button type="button" disabled={!checked} onClick={confirm}>
             {t.consentOk}
           </button>
-        </p>
-      </div>
-    </div>
+        </div>
+      )}
+      {children()}
+    </>
   );
 }

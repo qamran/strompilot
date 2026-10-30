@@ -105,16 +105,14 @@ describe("key views on fixtures", () => {
     expect(chip).toContain("Sample data");
   });
 
-  it("renders consent as a modal that hides its content", () => {
+  it("renders consent as a slim bar above visible content", () => {
     const html = withLang(
-      React.createElement(ConsentGate, {
-        text: "Consent text here",
-        storageKey: "plan",
-        children: () => "secret plan form",
-      }),
+      <ConsentGate text="Consent text here" storageKey="plan">
+        {() => "secret plan form"}
+      </ConsentGate>,
     );
-    expect(html).toContain("overlay");
+    expect(html).toContain("consent-bar");
     expect(html).toContain("I agree");
-    expect(html).not.toContain("secret plan form");
+    expect(html).toContain("secret plan form");
   });
 });

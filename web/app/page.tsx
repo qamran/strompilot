@@ -40,6 +40,7 @@ export default function PricesPage() {
   const [savings, setSavings] = useState(0);
   const [wallbox, setWallbox] = useState<WallboxStatus | null>(null);
   const [text, setText] = useState("");
+  const [consented, setConsented] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -58,7 +59,7 @@ export default function PricesPage() {
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (!text.trim()) return;
+    if (!text.trim() || !consented) return;
     try {
       const created = await startPlan(text.trim());
       router.push(`/fahrplan?thread=${encodeURIComponent(created.thread_id)}`);
@@ -117,7 +118,11 @@ export default function PricesPage() {
 
       <section className="panel">
         <p className="muted">{t.tagline}</p>
-        <ConsentGate text={t.consentPlan} storageKey="plan">
+        <ConsentGate
+          text={t.consentPlan}
+          storageKey="plan"
+          onChange={setConsented}
+        >
           {() => (
             <form className="plan-form" onSubmit={submit}>
               <input
@@ -126,7 +131,9 @@ export default function PricesPage() {
                 placeholder={t.planPlaceholder}
                 aria-label={t.planButton}
               />
-              <button type="submit">{t.planButton}</button>
+              <button type="submit" disabled={!consented}>
+                {t.planButton}
+              </button>
             </form>
           )}
         </ConsentGate>

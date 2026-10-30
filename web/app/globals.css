@@ -718,6 +718,35 @@ button.secondary:hover:not(:disabled) {
   margin-top: 0.75rem;
 }
 
+.consent-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem 1rem;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg0);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.55rem 0.8rem;
+  margin-bottom: 0.75rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.consent-bar label {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+  cursor: pointer;
+  flex: 1 1 320px;
+}
+
+.consent-bar button {
+  padding: 0.35rem 0.9rem;
+  font-size: 0.85rem;
+  flex-shrink: 0;
+}
+
 /* ---- command palette ---- */
 
 .palette-list {

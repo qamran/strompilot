@@ -16,6 +16,7 @@ export default function MeterPage() {
   const { t } = useLang();
   const [readings, setReadings] = useState<MeterReading[]>([]);
   const [file, setFile] = useState<File | null>(null);
+  const [consented, setConsented] = useState(false);
   const [keepPhoto, setKeepPhoto] = useState(false);
   const [corrected, setCorrected] = useState("");
   const [note, setNote] = useState("");
@@ -38,7 +39,7 @@ export default function MeterPage() {
   }, []);
 
   async function upload() {
-    if (!file) return;
+    if (!file || !consented) return;
     try {
       await uploadMeterPhoto(file, keepPhoto);
       setFile(null);
@@ -65,7 +66,11 @@ export default function MeterPage() {
     <>
       <section className="panel">
         <h2>{t.navMeter}</h2>
-        <ConsentGate text={t.consentPhoto} storageKey="photo">
+        <ConsentGate
+          text={t.consentPhoto}
+          storageKey="photo"
+          onChange={setConsented}
+        >
           {() => (
             <>
               <input
@@ -81,7 +86,11 @@ export default function MeterPage() {
                 />{" "}
                 {t.keepPhoto}
               </label>
-              <button type="button" disabled={!file} onClick={upload}>
+              <button
+                type="button"
+                disabled={!file || !consented}
+                onClick={upload}
+              >
                 {t.upload}
               </button>
             </>
