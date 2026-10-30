@@ -60,7 +60,7 @@ def _best_start(
 
 
 def _schedule_one(
-    device: DeviceConstraint, bars: list[PriceBar]
+    device: DeviceConstraint, bars: list[PriceBar], lang: str
 ) -> ScheduledSlot | None:
     """Schedule one device, or None when nothing fits."""
     hours_needed = math.ceil(device.duration_h)
@@ -70,6 +70,10 @@ def _schedule_one(
     run = bars[start : start + hours_needed]
     average = round(sum(bar.price_ct_kwh for bar in run) / hours_needed, 2)
     energy = round(device.power_kw * device.duration_h, 2)
+    if lang == "en":
+        reason = f"Cheapest hours in the window (Ø {average:.2f} ct/kWh)"
+    else:
+        reason = f"Günstigste Stunden im Fenster (Ø {average:.2f} ct/kWh)"
     return ScheduledSlot(
         device=device.device,
         start=f"{run[0].hour:02d}:00",
@@ -77,7 +81,7 @@ def _schedule_one(
         energy_kwh=energy,
         price_ct_kwh=average,
         cost_eur=round(energy * average / 100, 2),
-        reason=f"Günstigste Stunden im Fenster (Ø {average:.2f} ct/kWh)",
+        reason=reason,
     )
 
 
@@ -91,7 +95,7 @@ def _bar_overlaps(bar: PriceBar, earliest: int, latest: int) -> bool:
 
 
 def _schedule_fixed(
-    device: DeviceConstraint, bars: list[PriceBar]
+    device: DeviceConstraint, bars: list[PriceBar], lang: str
 ) -> ScheduledSlot | None:
     """Price one fixed-time device at its exact window, never moving it."""
     earliest = _minutes(device.earliest)
@@ -101,6 +105,10 @@ def _schedule_fixed(
         return None
     average = round(sum(bar.price_ct_kwh for bar in run) / len(run), 2)
     energy = round(device.power_kw * device.duration_h, 2)
+    if lang == "en":
+        reason = f"Fixed time (Ø {average:.2f} ct/kWh)"
+    else:
+        reason = f"Feste Zeit (Ø {average:.2f} ct/kWh)"
     return ScheduledSlot(
         device=device.device,
         start=device.earliest,
@@ -108,33 +116,48 @@ def _schedule_fixed(
         energy_kwh=energy,
         price_ct_kwh=average,
         cost_eur=round(energy * average / 100, 2),
-        reason=f"Feste Zeit (Ø {average:.2f} ct/kWh)",
+        reason=reason,
     )
 
 
-def optimize(constraints: HouseholdConstraints, bars: list[PriceBar]) -> OptimizedPlan:
+def optimize(
+    constraints: HouseholdConstraints, bars: list[PriceBar], lang: str = "de"
+) -> OptimizedPlan:
     """Place every shiftable device into its cheapest feasible hours."""
+    lang = "en" if lang == "en" else "de"
     ordered = sorted(bars, key=lambda bar: bar.hour)
     slots: list[ScheduledSlot] = []
     unscheduled: list[str] = []
     for device in constraints.devices:
         if not device.shiftable:
-            slot = _schedule_fixed(device, ordered)
+            slot = _schedule_fixed(device, ordered, lang)
             if slot is None:
-                unscheduled.append(
-                    f"{device.device}: keine Preise für feste Zeit "
-                    f"{device.earliest} bis {device.latest}"
-                )
+                if lang == "en":
+                    unscheduled.append(
+                        f"{device.device}: no prices for fixed time "
+                        f"{device.earliest} to {device.latest}"
+                    )
+                else:
+                    unscheduled.append(
+                        f"{device.device}: keine Preise für feste Zeit "
+                        f"{device.earliest} bis {device.latest}"
+                    )
             else:
                 slots.append(slot)
             continue
-        slot = _schedule_one(device, ordered)
+        slot = _schedule_one(device, ordered, lang)
         if slot is None:
             hours = math.ceil(device.duration_h)
-            unscheduled.append(
-                f"{device.device}: kein passendes {hours}-Stunden-Fenster "
-                f"zwischen {device.earliest} und {device.latest}"
-            )
+            if lang == "en":
+                unscheduled.append(
+                    f"{device.device}: no matching {hours}-hour window "
+                    f"between {device.earliest} and {device.latest}"
+                )
+            else:
+                unscheduled.append(
+                    f"{device.device}: kein passendes {hours}-Stunden-Fenster "
+                    f"zwischen {device.earliest} und {device.latest}"
+                )
         else:
             slots.append(slot)
     total = round(sum(slot.cost_eur for slot in slots), 2)

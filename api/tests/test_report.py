@@ -31,6 +31,15 @@ def test_june_day_matches_h25_shape() -> None:
     assert first.sample is False
 
 
+def test_assumptions_speak_english_when_asked() -> None:
+    report = build_month(
+        2026, 6, 3650.0, lambda day: (flat_bars(day, 30.0), False), 40.0, lang="en"
+    )
+    joined = " ".join(report.assumptions)
+    assert "Annual use 3650 kWh on H25 profile basis." in joined
+    assert "quarter-hourly" in joined
+
+
 def test_totals_aggregate_days() -> None:
     report = build_month(
         2026, 2, 3650.0, lambda day: (flat_bars(day, 30.0), False), 40.0

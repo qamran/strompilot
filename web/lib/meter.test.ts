@@ -15,6 +15,7 @@ describe("meter mirrors", () => {
           confidence: "high",
           sam_box: "10,10,90,90",
           photo_path: "/data/meter_photos/abc.png",
+          serial: "1ESY1162345678",
           created_at: "2026-06-01T08:00:01+00:00",
         },
       ],
@@ -42,6 +43,7 @@ describe("meter mirrors", () => {
         confidence: "high",
         sam_box: null,
         photo_path: "/data/meter_photos/def.png",
+        serial: null,
         created_at: "2026-06-02T08:00:01+00:00",
       },
       calibration: {

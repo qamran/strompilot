@@ -50,6 +50,23 @@ def test_narrate_returns_cited_text() -> None:
     assert len(narration.citations) >= 3
 
 
+def test_narrate_speaks_english_when_asked() -> None:
+    clean = (
+        "The Waschmaschine runs from 02:00 to 04:00 and costs 0.60 Euro. "
+        "The total cost is 0.60 Euro."
+    )
+    router = FakeRouter({"explainer": [reply(clean, SPARK_OPEN_MODEL)]})
+    narration, _ = narrate(
+        [SLOT], 0.60, CONSTRAINTS, [], "awattar-live", router, lang="en"
+    )
+    assert narration.text == clean
+    assert "Reply in English" in router.prompts[0]
+    joined = " ".join(
+        f"{citation.claim} {citation.detail}" for citation in narration.citations
+    )
+    assert "Total cost 0.60 Euro" in joined
+
+
 def test_check_faithfulness_passes_clean_text() -> None:
     assert check_faithfulness(CLEAN, [SLOT], 0.60) == []
 

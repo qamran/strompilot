@@ -44,6 +44,16 @@ def test_diff_flags_changed_background_and_same_devices() -> None:
     assert "Hintergrund" in diff.note
 
 
+def test_diff_note_speaks_english_when_asked() -> None:
+    day = date(2026, 6, 1)
+    before = plan_totals([make_device()], price_bars(), flat_baseline(day, 0.1), day)
+    after = plan_totals([make_device()], price_bars(), flat_baseline(day, 0.2), day)
+    diff = diff_totals(before, after, lang="en")
+    assert diff.devices_unchanged is True
+    assert "Background" in diff.note
+    assert "rise" in diff.note
+
+
 def test_day_totals_scale_linearly_with_annual_use() -> None:
     day = date(2026, 6, 1)
     small = day_plan_totals([make_device()], price_bars(), 1825.0, day)

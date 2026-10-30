@@ -116,10 +116,10 @@ function FahrplanInner() {
   }, [load, threadId]);
 
   useEffect(() => {
-    fetchMonthlyReport(currentMonth())
+    fetchMonthlyReport(currentMonth(), lang)
       .then(setReport)
       .catch(() => setReport(null));
-  }, []);
+  }, [lang]);
 
   async function decide(approved: boolean) {
     if (!threadId) return;
@@ -173,8 +173,8 @@ function FahrplanInner() {
             <GlassBox
               label={t.today}
               value={formatEur(plan.total_cost_eur, lang)}
-              formula="Σ Energie(kWh) × Preis(ct/kWh) / 100"
-              source="aWATTar day-ahead + Strompilot tariff math"
+              formula={t.totalFormula}
+              source={t.tariffSource}
             />
           )}
         <p className="muted">{statusNote}</p>
@@ -251,8 +251,8 @@ function FahrplanInner() {
               <GlassBox
                 label={t.worstHour}
                 value={`${report.report.worst_hour.day} ${report.report.worst_hour.hour}:00 · ${formatCt(report.report.worst_hour.price_ct_kwh, lang)}`}
-                formula="max(Preis(h)) über alle Monatstage"
-                source="aWATTar day-ahead Archiv/Sample"
+                formula={t.worstFormula}
+                source={t.archiveSource}
               />
             )}
             {report.illustration_data_url ? (

@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from functools import partial
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
@@ -27,7 +27,7 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph.state import CompiledStateGraph
@@ -383,6 +383,7 @@ def get_watch_router() -> ModelRouter:
 def trigger_watch(
     household_id: str,
     date: date | None = None,
+    lang: Literal["de", "en"] = "de",
     router: ModelRouter = Depends(get_watch_router),
 ) -> WatchReport:
     """Run one watcher pass over one household and price day."""
@@ -398,6 +399,7 @@ def trigger_watch(
             router=router,
             senders=None,
             now=now,
+            lang=lang,
         )
     except MemoryError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -429,6 +431,7 @@ class ConfirmBody(BaseModel):
     corrected_value_kwh: float | None = None
     target_date: date | None = None
     devices: list[DeviceConstraint] | None = None
+    lang: Literal["de", "en"] = "de"
 
 
 class ConfirmResponse(BaseModel):
@@ -516,10 +519,34 @@ def propose_reading(
                 else None
             ),
             photo_path=photo_name,
+            serial=proposal.serial,
         )
     except MeterError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return reading
+
+
+@app.get("/meter/readings/{reading_id}/photo")
+def read_reading_photo(reading_id: int, household_id: str) -> FileResponse:
+    """Serve one stored meter photo, kept only under explicit consent."""
+    try:
+        reading = MeterStore(_memory_db()).get(household_id, reading_id)
+    except MeterError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if reading is None or not reading.photo_path:
+        raise HTTPException(status_code=404, detail="photo not stored")
+    photo = _photos_dir() / Path(reading.photo_path).name
+    if not photo.is_file():
+        raise HTTPException(status_code=404, detail="photo not stored")
+    mime = next(
+        (
+            kind
+            for kind, extension in _METER_MIME_EXTENSIONS.items()
+            if photo.suffix.lower() == f".{extension}"
+        ),
+        "application/octet-stream",
+    )
+    return FileResponse(photo, media_type=mime)
 
 
 @app.get("/meter/readings", response_model=ReadingsResponse)
@@ -563,29 +590,40 @@ def confirm_reading(
         raise HTTPException(status_code=status, detail=str(exc)) from exc
     reading = stored.model_copy(update={"photo_path": Path(stored.photo_path).name})
     calibration = calibrate(store.confirmed(household_id))
+    english = body.lang == "en"
     if calibration is None:
+        note = (
+            "No yearly comparison yet: one more confirmed reading calibrates the usage."
+            if english
+            else "Noch kein Jahresvergleich möglich: Ein weiterer "
+            "bestätigter Zählerstand kalibriert den Verbrauch."
+        )
         return ConfirmResponse(
             reading=reading,
             calibration=None,
             diff=None,
-            note="Noch kein Jahresvergleich möglich: Ein weiterer "
-            "bestätigter Zählerstand kalibriert den Verbrauch.",
+            note=note,
         )
     old_annual = _annual_pref(memory, household_id)
     memory.set_preference(household_id, "annual_kwh", calibration.annual_kwh)
     if not body.devices:
+        note = (
+            "Annual use calibrated, no device plan passed for comparison."
+            if english
+            else "Jahresverbrauch kalibriert, kein Geräteplan zum Vergleich übergeben."
+        )
         return ConfirmResponse(
             reading=reading,
             calibration=calibration,
             diff=None,
-            note="Jahresverbrauch kalibriert, kein Geräteplan zum Vergleich übergeben.",
+            note=note,
         )
     now = datetime.now(BERLIN)
     target = body.target_date or now.date() + timedelta(days=1)
     bars = load_price_bars(target, _cache_dir(), datetime.now(UTC), DEFAULTS).bars
     before = day_plan_totals(body.devices, bars, old_annual, target)
     after = day_plan_totals(body.devices, bars, calibration.annual_kwh, target)
-    diff = diff_totals(before, after)
+    diff = diff_totals(before, after, body.lang)
     return ConfirmResponse(
         reading=reading, calibration=calibration, diff=diff, note=diff.note
     )
@@ -711,13 +749,14 @@ def read_monthly_report(
     household_id: str,
     month: str,
     flat_ct_kwh: float = Query(default=40.0, gt=0),
+    lang: Literal["de", "en"] = "de",
 ) -> MonthlyReportResponse:
     """Build one month of priced background use with savings."""
     if not household_id.strip():
         raise HTTPException(status_code=422, detail="household_id must not be blank")
     year, month_number = _checked_month(month)
     annual = _annual_pref(_store(), household_id)
-    report = build_month(year, month_number, annual, _month_loader, flat_ct_kwh)
+    report = build_month(year, month_number, annual, _month_loader, flat_ct_kwh, lang)
     art = _art_path(household_id, month)
     illustration = None
     if art.exists():
@@ -823,6 +862,7 @@ class PlanBody(BaseModel):
     household_id: str
     text: str
     plan_day: date | None = None
+    lang: Literal["de", "en"] = "de"
 
 
 class PlanCreated(BaseModel):
@@ -846,7 +886,12 @@ class PlanDetail(BaseModel):
 
 
 def _run_plan_to_pause(
-    runner: PlanRunner, thread_id: str, household_id: str, text: str, plan_day: date
+    runner: PlanRunner,
+    thread_id: str,
+    household_id: str,
+    text: str,
+    plan_day: date,
+    lang: str = "de",
 ) -> None:
     """Run one thread to its approval pause, recording failures."""
     try:
@@ -864,6 +909,7 @@ def _run_plan_to_pause(
                     "household_id": household_id,
                     "plan_day": plan_day.isoformat(),
                     "approval": "pending",
+                    "lang": lang,
                 },
                 _thread_config(thread_id),
             )
@@ -886,7 +932,13 @@ def start_plan(
     thread_id = uuid.uuid4().hex
     plan_day = body.plan_day or datetime.now(BERLIN).date() + timedelta(days=1)
     background.add_task(
-        _run_plan_to_pause, runner, thread_id, body.household_id, body.text, plan_day
+        _run_plan_to_pause,
+        runner,
+        thread_id,
+        body.household_id,
+        body.text,
+        plan_day,
+        body.lang,
     )
     return PlanCreated(thread_id=thread_id, status="running")
 

@@ -102,6 +102,13 @@ const STRINGS = {
     modelsBody:
       "Muse Spark 1.3 (Meta) denkt nach, Muse Spark Open (Baseten) schreibt Masse, Muse Wonder prüft kritisch, SAM 3.1 findet den Zähler im Foto, Muse Image malt das Titelbild.",
     language: "Sprache",
+    meterNumber: "Zählernr.",
+    meterPhoto: "Zählerfoto",
+    avgFormula: "Ø = Σ Preis(h) / 24",
+    totalFormula: "Σ Energie(kWh) × Preis(ct/kWh) / 100",
+    tariffSource: "aWATTar day-ahead + Strompilot-Tarifrechner",
+    worstFormula: "max(Preis(h)) über alle Monatstage",
+    archiveSource: "aWATTar day-ahead Archiv/Sample",
   },
   en: {
     tagline: "Your power copilot for dynamic tariffs",
@@ -192,6 +199,13 @@ const STRINGS = {
     modelsBody:
       "Muse Spark 1.3 (Meta) reasons, Muse Spark Open (Baseten) writes volume, Muse Wonder reviews critically, SAM 3.1 finds the meter in the photo, Muse Image paints the cover art.",
     language: "Language",
+    meterNumber: "Meter no.",
+    meterPhoto: "Meter photo",
+    avgFormula: "Ø = Σ price(h) / 24",
+    totalFormula: "Σ energy(kWh) × price(ct/kWh) / 100",
+    tariffSource: "aWATTar day-ahead + Strompilot tariff math",
+    worstFormula: "max(price(h)) across all month days",
+    archiveSource: "aWATTar day-ahead archive/sample",
   },
 };
 

@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import {
   confirmReading,
   fetchReadings,
+  readingPhotoUrl,
   uploadMeterPhoto,
 } from "../../lib/api";
 import type { MeterReading } from "../../lib/meter";
@@ -13,7 +14,7 @@ import { useLang } from "../../lib/i18n";
 import ConsentGate from "../../components/ConsentGate";
 
 export default function MeterPage() {
-  const { t } = useLang();
+  const { t, lang } = useLang();
   const [readings, setReadings] = useState<MeterReading[]>([]);
   const [file, setFile] = useState<File | null>(null);
   const [consented, setConsented] = useState(false);
@@ -55,6 +56,7 @@ export default function MeterPage() {
     try {
       const res = await confirmReading(
         id,
+        lang,
         corrected.trim() ? Number(corrected) : undefined,
       );
       setNote(res.note);
@@ -113,10 +115,20 @@ export default function MeterPage() {
         />
         <ul>
           {readings.map((reading) => (
-            <li key={reading.id} className="memory-row">
+            <li key={reading.id} className="memory-row reading-row">
+              {reading.photo_path && (
+                // Consent-stored upload served by the API: no optimizer benefit.
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  className="reading-photo"
+                  src={readingPhotoUrl(reading.id)}
+                  alt={`${t.meterPhoto} #${reading.id}`}
+                />
+              )}
               <span className="tabular">
                 #{reading.id} · {reading.value_kwh} kWh · {reading.status} ·
-                SAM {reading.sam_box ?? "–"}
+                SAM {reading.sam_box ?? "–"} · {t.meterNumber}{" "}
+                {reading.serial ?? "–"}
               </span>
               {reading.status !== "confirmed" && (
                 <button type="button" onClick={() => confirm(reading.id)}>

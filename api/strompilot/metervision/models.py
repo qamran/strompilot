@@ -16,6 +16,12 @@ class DigitReading(BaseModel):
     confidence: str
 
 
+class SerialReading(BaseModel):
+    """One meter serial number, or null when the photo hides it."""
+
+    serial: str | None
+
+
 class MeterReading(BaseModel):
     """One proposed or confirmed meter reading."""
 
@@ -27,6 +33,7 @@ class MeterReading(BaseModel):
     confidence: str
     sam_box: str | None
     photo_path: str
+    serial: str | None = None
     created_at: datetime
 
 

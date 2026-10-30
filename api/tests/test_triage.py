@@ -47,6 +47,12 @@ def test_prompt_carries_window_facts_and_context() -> None:
     assert "frueherer Alarm" in prompt
 
 
+def test_judge_asks_for_english_reasons_when_asked() -> None:
+    router = FakeRouter({"watcher": [reply('{"fire": true, "reason": "ok"}')]})
+    judge(candidate(), [], [], router, lang="en")
+    assert "one short English sentence" in router.prompts[0]
+
+
 def test_garbage_reply_fails_closed_to_skip() -> None:
     router = FakeRouter({"watcher": [reply("MAYBE, check back later")]})
     verdict = judge(candidate(), [], [], router)

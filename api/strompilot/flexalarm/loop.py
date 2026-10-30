@@ -45,6 +45,7 @@ def run_once(
     router: ChatRouter,
     senders: list[Sender] | None,
     now: datetime,
+    lang: str = "de",
 ) -> WatchReport:
     """Run one watcher pass over one household and one price day."""
     active = (
@@ -74,11 +75,11 @@ def run_once(
         if key in known:
             duplicates += 1
             continue
-        verdict = judge(candidate, devices, recent, router)
+        verdict = judge(candidate, devices, recent, router, lang)
         if not verdict.fire:
             skipped += 1
             continue
-        title, body = compose(candidate, verdict)
+        title, body = compose(candidate, verdict, lang)
         if is_quiet(now, quiet):
             stored = alerts.record(
                 household_id=household_id,
@@ -163,6 +164,7 @@ def run_all(
     router: ChatRouter,
     senders: list[Sender] | None,
     now: datetime,
+    lang: str = "de",
 ) -> list[WatchReport]:
     """Run one watcher pass for every known household."""
     return [
@@ -174,6 +176,7 @@ def run_all(
             router=router,
             senders=senders,
             now=now,
+            lang=lang,
         )
         for household_id in memory.list_households()
     ]

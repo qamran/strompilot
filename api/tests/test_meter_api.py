@@ -48,8 +48,10 @@ def meter_setup(
         "test",
         datetime.now(UTC),
     )
+    digits = reply('{"value_kwh": 100.0, "confidence": "high"}')
+    serial = reply('{"serial": "1ESY1162345678"}')
     app.dependency_overrides[get_meter_vision] = lambda: vision(
-        [[], []], [reply('{"value_kwh": 100.0, "confidence": "high"}')] * 4
+        [[], []], [digits, serial] * 6
     )
     yield TestClient(app), tmp_path
     app.dependency_overrides.clear()
@@ -97,6 +99,44 @@ def test_intake_proposes_and_lists(
     assert len(listed.json()["readings"]) == 1
 
 
+def test_upload_stores_serial(
+    meter_setup: tuple[TestClient, Path],
+) -> None:
+    client, _ = meter_setup
+    created = upload(client, png())
+    assert isinstance(created, dict)
+    assert created["serial"] == "1ESY1162345678"
+    listed = client.get("/meter/readings?household_id=h1")
+    assert listed.json()["readings"][0]["serial"] == "1ESY1162345678"
+
+
+def test_photo_served_with_consent(
+    meter_setup: tuple[TestClient, Path],
+) -> None:
+    client, _ = meter_setup
+    response = client.post(
+        "/meter/readings?household_id=h1&keep_photo=true",
+        files={"file": ("meter.png", png(), "image/png")},
+    )
+    reading_id = response.json()["id"]
+    photo = client.get(f"/meter/readings/{reading_id}/photo?household_id=h1")
+    assert photo.status_code == 200
+    assert photo.headers["content-type"] == "image/png"
+    assert photo.content == png()
+
+
+def test_photo_missing_returns_404(
+    meter_setup: tuple[TestClient, Path],
+) -> None:
+    client, _ = meter_setup
+    created = upload(client, png())
+    assert isinstance(created, dict)
+    assert (
+        client.get(f"/meter/readings/{created['id']}/photo?household_id=h1")
+    ).status_code == 404
+    assert client.get("/meter/readings/999/photo?household_id=h1").status_code == 404
+
+
 def test_first_confirm_has_no_calibration(
     meter_setup: tuple[TestClient, Path],
 ) -> None:
@@ -112,6 +152,20 @@ def test_first_confirm_has_no_calibration(
     assert payload["calibration"] is None
     assert payload["diff"] is None
     assert "weiterer" in payload["note"]
+
+
+def test_confirm_note_speaks_english_when_asked(
+    meter_setup: tuple[TestClient, Path],
+) -> None:
+    client, _ = meter_setup
+    created = upload(client, png())
+    assert isinstance(created, dict)
+    decided = client.post(
+        f"/meter/readings/{created['id']}/confirm?household_id=h1",
+        json={"lang": "en"},
+    )
+    assert decided.status_code == 200
+    assert "confirmed reading" in decided.json()["note"]
 
 
 def test_second_confirm_calibrates_and_diffs(

@@ -47,6 +47,7 @@ class PlanState(TypedDict, total=False):
     request: str
     household_id: str
     plan_day: str
+    lang: str
     intent: str
     analysis: list[str]
     constraints: dict[str, Any]

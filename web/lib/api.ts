@@ -35,6 +35,7 @@ import {
   type FeedbackListResponse,
   type FeedbackResponse,
 } from "./feedback";
+import type { Lang } from "./i18n";
 
 export const API_URL =
   process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
@@ -54,9 +55,10 @@ async function request<T>(
   return parse(await res.json());
 }
 
-function household(query = ""): string {
+function household(query = "", lang?: Lang): string {
   const sep = query.includes("?") ? "&" : "?";
-  return `${query}${sep}household_id=${encodeURIComponent(HOUSEHOLD_ID)}`;
+  const base = `${query}${sep}household_id=${encodeURIComponent(HOUSEHOLD_ID)}`;
+  return lang ? `${base}&lang=${lang}` : base;
 }
 
 export function fetchHealth(): Promise<HealthResponse> {
@@ -68,7 +70,11 @@ export function fetchPrices(day?: string): Promise<DayAheadPriceSeries> {
   return request(`/prices/day-ahead${query}`, parseDayAheadPriceSeries);
 }
 
-export function startPlan(text: string, planDay?: string): Promise<PlanCreated> {
+export function startPlan(
+  text: string,
+  lang: Lang,
+  planDay?: string,
+): Promise<PlanCreated> {
   return request(
     "/plan",
     parsePlanCreated,
@@ -79,6 +85,7 @@ export function startPlan(text: string, planDay?: string): Promise<PlanCreated> 
         household_id: HOUSEHOLD_ID,
         text,
         plan_day: planDay ?? null,
+        lang,
       }),
     },
   );
@@ -124,8 +131,8 @@ export function fetchAlerts(): Promise<Alert[]> {
   });
 }
 
-export function triggerWatch(): Promise<WatchReport> {
-  return request(household("/flexalarm/watch"), parseWatchReport, {
+export function triggerWatch(lang: Lang): Promise<WatchReport> {
+  return request(household("/flexalarm/watch", lang), parseWatchReport, {
     method: "POST",
   });
 }
@@ -156,8 +163,13 @@ export function fetchReadings(): Promise<MeterReading[]> {
   });
 }
 
+export function readingPhotoUrl(readingId: number): string {
+  return `${API_URL}${household(`/meter/readings/${readingId}/photo`)}`;
+}
+
 export function confirmReading(
   readingId: number,
+  lang: Lang,
   correctedValueKwh?: number,
 ): Promise<ConfirmResponse> {
   return request(
@@ -168,6 +180,7 @@ export function confirmReading(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         corrected_value_kwh: correctedValueKwh ?? null,
+        lang,
       }),
     },
   );
@@ -209,9 +222,12 @@ export function fetchHistory(): Promise<EpisodesList> {
   return request(household("/memory/history"), parseEpisodesList);
 }
 
-export function fetchMonthlyReport(month: string): Promise<MonthlyReportResponse> {
+export function fetchMonthlyReport(
+  month: string,
+  lang: Lang,
+): Promise<MonthlyReportResponse> {
   return request(
-    household(`/report/monthly?month=${encodeURIComponent(month)}`),
+    household(`/report/monthly?month=${encodeURIComponent(month)}`, lang),
     parseMonthlyReportResponse,
   );
 }

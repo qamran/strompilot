@@ -81,6 +81,25 @@ def test_plan_runs_to_pause(plan_setup: TestClient) -> None:
     assert "Waschmaschine" in payload["narration"]
 
 
+def test_plan_speaks_english_when_asked(plan_setup: TestClient) -> None:
+    created = plan_setup.post(
+        "/plan",
+        json={
+            "household_id": "h1",
+            "text": "run the washer at night",
+            "plan_day": "2026-06-01",
+            "lang": "en",
+        },
+    )
+    assert created.status_code == 202
+    detail = plan_setup.get(f"/plan/{created.json()['thread_id']}")
+    payload = detail.json()
+    assert payload["status"] == "paused"
+    assert payload["schedule"][0]["reason"].startswith("Cheapest hours")
+    claims = " ".join(citation["claim"] for citation in payload["citations"])
+    assert "runs 02:00 to 04:00" in claims
+
+
 def test_approve_then_plan_publishes(plan_setup: TestClient) -> None:
     created = plan_setup.post("/plan", json={"household_id": "h1", "text": "waschen"})
     thread_id = created.json()["thread_id"]

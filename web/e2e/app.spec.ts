@@ -104,7 +104,9 @@ test("plan journey completes, approves, and learns", async ({
   await expect(page.locator(".gantt-block").first()).toBeVisible();
   await page.screenshot({ path: join(SHOTS, "fahrplan.png") });
   await page.locator(".gantt-block").first().click();
-  await expect(page.getByText("Why this block?")).toBeVisible();
+  const overlay = page.getByRole("dialog", { name: "Why this block?" });
+  await expect(overlay).toBeVisible();
+  await expect(overlay.getByText(/runs \d\d:\d\d to \d\d:\d\d/)).toBeVisible();
   await page.getByRole("button", { name: "Close" }).click();
   await page.getByRole("button", { name: "Approve" }).click();
   await expect(page.getByText("The plan is approved.")).toBeVisible({
@@ -125,12 +127,15 @@ test("meter upload reads and confirms", async ({ page }) => {
   const rows = page.locator("section ul li");
   const before = await rows.count();
   await page.locator('input[type="file"]').setInputFiles(METER_PHOTO);
+  await page.getByRole("checkbox", { name: "Store the photo" }).check();
   const upload = page.getByRole("button", { name: "Upload photo" });
   await expect(upload).toBeEnabled();
   await upload.click();
   await expect(rows).toHaveCount(before + 1, { timeout: 120_000 });
   const fresh = rows.last();
   await expect(fresh).toContainText("4217.3 kWh");
+  await expect(fresh).toContainText("1ESY1162345678");
+  await expect(fresh.getByRole("img", { name: /Meter photo/ })).toBeVisible();
   await fresh.getByRole("button", { name: "Confirm" }).click();
   await expect(fresh.getByText("confirmed")).toBeVisible({
     timeout: 60_000,
@@ -140,10 +145,15 @@ test("meter upload reads and confirms", async ({ page }) => {
 
 test("alarms trigger a watch", async ({ page }) => {
   await page.goto("/alarme");
+  const cards = page.locator(".alert-card");
+  const before = await cards.count();
   await page.getByRole("button", { name: "Check now" }).click();
   await expect(page.getByText(/→.*✓/)).toBeVisible({
     timeout: 120_000,
   });
+  if ((await cards.count()) > before) {
+    await expect(cards.last().getByText("on average")).toBeVisible();
+  }
   await page.screenshot({ path: join(SHOTS, "alarme.png") });
 });
 

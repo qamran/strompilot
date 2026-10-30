@@ -3,6 +3,7 @@
     "name": "meter_clean",
     "file": "meter_clean.png",
     "expected_kwh": 4217.3,
+    "expected_serial": "1ESY1162345678",
     "lcd": [
       90,
       170,
@@ -14,6 +15,7 @@
     "name": "meter_obis",
     "file": "meter_obis.png",
     "expected_kwh": 12893.7,
+    "expected_serial": "1ESY1162345679",
     "lcd": [
       90,
       170,
@@ -25,6 +27,7 @@
     "name": "meter_dim",
     "file": "meter_dim.png",
     "expected_kwh": 365.0,
+    "expected_serial": "1ESY1162345680",
     "lcd": [
       90,
       170,

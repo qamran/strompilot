@@ -9,6 +9,7 @@ export interface MeterReading {
   confidence: string;
   sam_box: string | null;
   photo_path: string;
+  serial: string | null;
   created_at: string;
 }
 
@@ -63,6 +64,9 @@ function parseReading(value: unknown): MeterReading {
     typeof record.confidence !== "string" ||
     (record.sam_box !== null && typeof record.sam_box !== "string") ||
     typeof record.photo_path !== "string" ||
+    (record.serial !== null &&
+      record.serial !== undefined &&
+      typeof record.serial !== "string") ||
     typeof record.created_at !== "string"
   ) {
     throw new Error("MeterReading has invalid fields");
@@ -76,6 +80,10 @@ function parseReading(value: unknown): MeterReading {
     confidence: record.confidence,
     sam_box: record.sam_box,
     photo_path: record.photo_path,
+    serial:
+      record.serial === undefined || record.serial === null
+        ? null
+        : record.serial,
     created_at: record.created_at,
   };
 }

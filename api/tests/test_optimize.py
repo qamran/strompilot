@@ -20,6 +20,22 @@ def test_picks_cheapest_feasible_window() -> None:
     assert plan.total_cost_eur == 0.60
 
 
+def test_reasons_speak_english_when_asked() -> None:
+    plan = optimize(HouseholdConstraints(devices=[device()]), make_bars(), lang="en")
+    (slot,) = plan.slots
+    assert slot.reason == "Cheapest hours in the window (Ø 15.00 ct/kWh)"
+    stuck = optimize(
+        HouseholdConstraints(
+            devices=[device(duration_h=5.0, earliest="18:00", latest="20:00")]
+        ),
+        make_bars(),
+        lang="en",
+    )
+    assert stuck.unscheduled == [
+        "Waschmaschine: no matching 5-hour window between 18:00 and 20:00"
+    ]
+
+
 def test_respects_narrow_window_despite_cheap_night() -> None:
     plan = optimize(
         HouseholdConstraints(devices=[device(earliest="18:00", latest="20:00")]),

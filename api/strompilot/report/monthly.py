@@ -117,8 +117,10 @@ def build_month(
     annual_kwh: float,
     loader: BarLoader,
     flat_ct_kwh: float,
+    lang: str = "de",
 ) -> MonthlyReport:
     """Price every day of one month against the H25 baseline."""
+    lang = "en" if lang == "en" else "de"
     month_key = f"{year:04d}-{month:02d}"
     if _MONTH.match(month_key) is None:
         raise ValueError(f"bad month: {month_key!r}")
@@ -162,9 +164,20 @@ def build_month(
         flat_ct_kwh=flat_ct_kwh,
         worst_hour=worst,
         sample_days=sum(1 for day in days if day.sample),
-        assumptions=[
-            f"Jahresverbrauch {annual_kwh:.0f} kWh auf H25-Profilbasis.",
-            f"Vergleichstarif {flat_ct_kwh:.2f} ct/kWh, Annahme.",
-            "Stundenpreise; die Abrechnung erfolgt viertelstündlich.",
-        ],
+        assumptions=_assumptions(annual_kwh, flat_ct_kwh, lang),
     )
+
+
+def _assumptions(annual_kwh: float, flat_ct_kwh: float, lang: str) -> list[str]:
+    """State the report basis in the household language."""
+    if lang == "en":
+        return [
+            f"Annual use {annual_kwh:.0f} kWh on H25 profile basis.",
+            f"Reference tariff {flat_ct_kwh:.2f} ct/kWh, assumed.",
+            "Hourly prices; billing settles quarter-hourly.",
+        ]
+    return [
+        f"Jahresverbrauch {annual_kwh:.0f} kWh auf H25-Profilbasis.",
+        f"Vergleichstarif {flat_ct_kwh:.2f} ct/kWh, Annahme.",
+        "Stundenpreise; die Abrechnung erfolgt viertelstündlich.",
+    ]

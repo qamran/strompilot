@@ -8,7 +8,7 @@ import type { Alert, WatchReport } from "../../lib/flexalarm";
 import { useLang } from "../../lib/i18n";
 
 export default function AlarmsPage() {
-  const { t } = useLang();
+  const { t, lang } = useLang();
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [report, setReport] = useState<WatchReport | null>(null);
   const [busy, setBusy] = useState(false);
@@ -33,7 +33,7 @@ export default function AlarmsPage() {
   async function watch() {
     setBusy(true);
     try {
-      setReport(await triggerWatch());
+      setReport(await triggerWatch(lang));
       await reload();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

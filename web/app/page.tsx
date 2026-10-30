@@ -49,19 +49,19 @@ export default function PricesPage() {
       .catch((err: unknown) =>
         setError(err instanceof Error ? err.message : String(err)),
       );
-    fetchMonthlyReport(currentMonth())
+    fetchMonthlyReport(currentMonth(), lang)
       .then((res) => setSavings(res.report.savings_eur))
       .catch(() => setSavings(0));
     fetchWallbox()
       .then(setWallbox)
       .catch(() => setWallbox(null));
-  }, []);
+  }, [lang]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (!text.trim() || !consented) return;
     try {
-      const created = await startPlan(text.trim());
+      const created = await startPlan(text.trim(), lang);
       router.push(`/fahrplan?thread=${encodeURIComponent(created.thread_id)}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -149,7 +149,7 @@ export default function PricesPage() {
           <GlassBox
             label={t.avg}
             value={`${formatCt(avg, lang)}/kWh`}
-            formula="Ø = Σ Preis(h) / 24"
+            formula={t.avgFormula}
             source={series.attribution}
           />
         )}

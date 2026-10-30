@@ -31,6 +31,14 @@ def test_compose_names_window_and_prices() -> None:
     assert "8,50" in body and "25,00" in body
 
 
+def test_compose_speaks_english_when_asked() -> None:
+    title, body = compose(candidate(), TriageVerdict(fire=True, reason="ok"), lang="en")
+    assert "Cheap power" in title
+    assert "02:00" in title and "04:00" in title
+    assert "8.50" in body and "25.00" in body
+    assert "on average" in body
+
+
 def test_compose_mentions_negative_prices_plainly() -> None:
     stretch = AlertCandidate(
         kind="negative_prices",

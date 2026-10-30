@@ -55,16 +55,25 @@ def day_plan_totals(
     return plan_totals(devices, bars, baseline_day(day, annual_kwh), day, annual_kwh)
 
 
-def diff_totals(before: PlanTotals, after: PlanTotals) -> ReplanDiff:
+def diff_totals(before: PlanTotals, after: PlanTotals, lang: str = "de") -> ReplanDiff:
     """Diff two totals; devices never move on a calibration change."""
+    lang = "en" if lang == "en" else "de"
     same = (
         before.device_cost_eur == after.device_cost_eur and before.slots == after.slots
     )
     delta = after.total_eur - before.total_eur
-    direction = "steigen" if delta >= 0 else "sinken"
-    note = (
-        f"Hintergrund {before.baseline_kwh:.2f} auf "
-        f"{after.baseline_kwh:.2f} kWh, Tageskosten {direction} um "
-        f"{abs(delta):.2f} Euro."
-    )
+    if lang == "en":
+        direction = "rise" if delta >= 0 else "fall"
+        note = (
+            f"Background {before.baseline_kwh:.2f} to "
+            f"{after.baseline_kwh:.2f} kWh, day costs {direction} by "
+            f"{abs(delta):.2f} Euro."
+        )
+    else:
+        direction = "steigen" if delta >= 0 else "sinken"
+        note = (
+            f"Hintergrund {before.baseline_kwh:.2f} auf "
+            f"{after.baseline_kwh:.2f} kWh, Tageskosten {direction} um "
+            f"{abs(delta):.2f} Euro."
+        )
     return ReplanDiff(before=before, after=after, devices_unchanged=same, note=note)

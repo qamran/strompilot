@@ -7,17 +7,28 @@ from .models import AlertCandidate, TriageVerdict
 
 TRIAGE_TOKENS = 500
 
-_SYSTEM = """You triage electricity price alerts for one German household.
+_SYSTEM = {
+    "de": """You triage electricity price alerts for one German household.
 Reply with exactly one JSON object and nothing else:
 {"fire": true or false, "reason": "one short German sentence, no numbers"}.
 Fire only when the window is unusually good or bad and the household
 can still act on it. Stay silent on ordinary days and on repeats of
-recent alerts."""
+recent alerts.""",
+    "en": """You triage electricity price alerts for one German household.
+Reply with exactly one JSON object and nothing else:
+{"fire": true or false, "reason": "one short English sentence, no numbers"}.
+Fire only when the window is unusually good or bad and the household
+can still act on it. Stay silent on ordinary days and on repeats of
+recent alerts.""",
+}
 
 _EXAMPLE_USER = """Kind: cheap_window. Day: 2026-06-01. Window: 02:00-04:00.
 Average: 8.50 ct/kWh. Daily mean: 25.00 ct/kWh. Extreme: 8.00 ct/kWh.
 Devices: E-Auto. Recent alerts: none."""
-_EXAMPLE_REPLY = '{"fire": true, "reason": "Nachtstrom kostet nur einen Bruchteil"}'
+_EXAMPLE_REPLY = {
+    "de": '{"fire": true, "reason": "Nachtstrom kostet nur einen Bruchteil"}',
+    "en": '{"fire": true, "reason": "Night power costs only a fraction"}',
+}
 
 
 def _brief(candidate: AlertCandidate, devices: list[str], recent: list[str]) -> str:
@@ -39,12 +50,14 @@ def judge(
     devices: list[str],
     recent: list[str],
     router: ChatRouter,
+    lang: str = "de",
 ) -> TriageVerdict:
     """Ask the watcher leg for a verdict, failing closed to skip."""
+    lang = "en" if lang == "en" else "de"
     messages = [
-        Message(role="system", content=_SYSTEM),
+        Message(role="system", content=_SYSTEM[lang]),
         Message(role="user", content=_EXAMPLE_USER),
-        Message(role="assistant", content=_EXAMPLE_REPLY),
+        Message(role="assistant", content=_EXAMPLE_REPLY[lang]),
         Message(role="user", content=_brief(candidate, devices, recent)),
     ]
     try:

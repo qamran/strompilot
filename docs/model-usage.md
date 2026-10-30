@@ -8,7 +8,7 @@ exists so judges and auditors can verify our Meta tooling use in one place.
 
 | Model | Endpoint | Used in | Purpose | Volume | On failure |
 |---|---|---|---|---|---|
-| Muse Spark 1.3 | Meta Model API | SP-04 supervisor, analyst; SP-05 extraction; SP-09 digit reading | Hard reasoning, reliable extraction, and scene understanding | Every plan | Retry, then fail loudly |
+| Muse Spark 1.3 | Meta Model API | SP-04 supervisor, analyst; SP-05 extraction; SP-09 digit reading; meter serial reading | Hard reasoning, reliable extraction, and scene understanding | Every plan | Retry, then fail loudly (serial fails softly to null) |
 | Muse Spark Open | Baseten inference | SP-05 narration; SP-03 re-ranking; SP-08 triage; SP-13 eval judges (judge worker, 1200 tokens, effort low, temp 0.0) | High-volume jobs | Many calls per plan | Per-call fallback to Muse Spark |
 | Muse Wonder | Meta Model API | SP-04 critic | Final quality gate on every plan | One review per plan | Muse Spark acts as critic |
 | SAM 3.1 | Meta Model API | SP-09 meter intake | Segment the meter display via text prompts before digit reading | One call per photo | Read the full photo without a mask |
@@ -48,6 +48,14 @@ exists so judges and auditors can verify our Meta tooling use in one place.
   v1. Reading meters aloud by phone call is a possible later use.
 - Embeddings and vector search stay out because Meta offers no embedding
   model, so rule lookup uses BM25 keyword search instead.
+
+## Language
+
+- The UI sends its language (de or en, default de) with every plan,
+  watch, report, and meter-confirm request. Narration, alert triage,
+  and all deterministic copy answer in that language.
+- Model prompts stay pinned per language with worked examples; the
+  faithfulness checker accepts both decimal commas and points.
 
 ## Reasoning effort
 

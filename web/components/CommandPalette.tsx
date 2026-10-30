@@ -41,7 +41,7 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
       label: t.watchNow,
       hint: "/alarme",
       run: () => {
-        triggerWatch().catch(() => {});
+        triggerWatch(lang).catch(() => {});
         go("/alarme");
       },
     },

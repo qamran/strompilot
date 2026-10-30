@@ -6,7 +6,7 @@ CONTRACT_VERSION. Both sides assert the pinned value in their test suites.
 
 from pydantic import BaseModel
 
-CONTRACT_VERSION = "0.8.0"
+CONTRACT_VERSION = "0.9.0"
 
 
 class HealthResponse(BaseModel):

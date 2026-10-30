@@ -13,6 +13,18 @@ import { useLang } from "../lib/i18n";
 
 export default function MemorySidebar() {
   const { t } = useLang();
+  const verdictLabel: Record<string, string> = {
+    good: t.feedbackGood,
+    too_early: t.feedbackEarly,
+    too_late: t.feedbackLate,
+  };
+
+  function episodeText(text: string): string {
+    const cut = text.lastIndexOf(": ");
+    if (cut < 0) return text;
+    const label = verdictLabel[text.slice(cut + 2).trim()];
+    return label ? `${text.slice(0, cut)}: ${label}` : text;
+  }
   const [prefs, setPrefs] = useState<PreferencesMap>({
     household_id: "",
     preferences: {},
@@ -64,7 +76,7 @@ export default function MemorySidebar() {
       <ul>
         {episodes.map((episode) => (
           <li key={episode.id} className="muted">
-            {episode.text}
+            {episodeText(episode.text)}
           </li>
         ))}
       </ul>

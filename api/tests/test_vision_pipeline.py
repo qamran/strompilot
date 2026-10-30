@@ -25,38 +25,54 @@ def box() -> SegmentBox:
     return SegmentBox(x1=10, y1=10, x2=90, y2=90, width=100, height=100, confidence=0.9)
 
 
+DIGITS = '{"value_kwh": 4217.3, "confidence": "high"}'
+SERIAL = '{"serial": "1ESY1162345678"}'
+
+
 def test_box_found_crops_then_reads() -> None:
     sam = FakeSam([[box()]])
-    router = FakeRouter(
-        {"analyst": [reply('{"value_kwh": 4217.3, "confidence": "high"}')]}
-    )
+    router = FakeRouter({"analyst": [reply(DIGITS), reply(SERIAL)]})
     proposal = process_photo(photo(), "image/png", sam, router)
     assert proposal.value_kwh == 4217.3
+    assert proposal.serial == "1ESY1162345678"
     assert proposal.sam_used is True
     assert proposal.sam_box == box()
     assert sam.prompts == [SAM_PROMPT]
-    (sent,) = router.messages
-    assert sent[1].image is not None
-    assert sent[1].image.mime == "image/png"
+    crop_sent, serial_sent = router.messages
+    assert crop_sent[1].image is not None
+    assert crop_sent[1].image.mime == "image/png"
+    assert serial_sent[1].image is not None
+    assert serial_sent[1].image.mime == "image/png"
 
 
 def test_no_box_reads_full_photo() -> None:
     sam = FakeSam([[]])
     router = FakeRouter(
-        {"analyst": [reply('{"value_kwh": 10.0, "confidence": "low"}')]}
+        {
+            "analyst": [
+                reply('{"value_kwh": 10.0, "confidence": "low"}'),
+                reply(SERIAL),
+            ]
+        }
     )
     proposal = process_photo(photo(), "image/jpeg", sam, router)
     assert proposal.sam_used is False
     assert proposal.sam_box is None
-    (sent,) = router.messages
-    assert sent[1].image is not None
-    assert sent[1].image.mime == "image/jpeg"
+    assert proposal.serial == "1ESY1162345678"
+    digits_sent, _ = router.messages
+    assert digits_sent[1].image is not None
+    assert digits_sent[1].image.mime == "image/jpeg"
 
 
 def test_sam_error_falls_back_to_full_photo() -> None:
     sam = FakeSam([LlmError("sam down")])
     router = FakeRouter(
-        {"analyst": [reply('{"value_kwh": 10.0, "confidence": "low"}')]}
+        {
+            "analyst": [
+                reply('{"value_kwh": 10.0, "confidence": "low"}'),
+                reply(SERIAL),
+            ]
+        }
     )
     proposal = process_photo(photo(), "image/png", sam, router)
     assert proposal.sam_used is False
@@ -70,13 +86,29 @@ def test_crop_read_failure_retries_full_photo() -> None:
             "analyst": [
                 reply("keine Ahnung"),
                 reply('{"value_kwh": 10.0, "confidence": "low"}'),
+                reply(SERIAL),
             ]
         }
     )
     proposal = process_photo(photo(), "image/jpeg", sam, router)
     assert proposal.value_kwh == 10.0
     assert proposal.sam_used is False
-    assert len(router.messages) == 2
+    assert len(router.messages) == 3
+
+
+def test_serial_failure_keeps_digits() -> None:
+    sam = FakeSam([[]])
+    router = FakeRouter(
+        {
+            "analyst": [
+                reply('{"value_kwh": 10.0, "confidence": "low"}'),
+                reply("no idea"),
+            ]
+        }
+    )
+    proposal = process_photo(photo(), "image/png", sam, router)
+    assert proposal.value_kwh == 10.0
+    assert proposal.serial is None
 
 
 def test_double_read_failure_fails_loudly() -> None:

@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS meter_readings (
     confidence TEXT NOT NULL,
     sam_box TEXT,
     photo_path TEXT NOT NULL,
+    serial TEXT,
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_readings_household
@@ -41,6 +42,11 @@ class MeterStore:
         path.parent.mkdir(parents=True, exist_ok=True)
         with sqlite3.connect(path) as conn:
             conn.executescript(_SCHEMA)
+            columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(meter_readings)")
+            }
+            if "serial" not in columns:
+                conn.execute("ALTER TABLE meter_readings ADD COLUMN serial TEXT")
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -60,6 +66,7 @@ class MeterStore:
         confidence: str,
         sam_box: str | None,
         photo_path: str,
+        serial: str | None = None,
     ) -> MeterReading:
         """Store one vision reading awaiting human confirmation."""
         household_id = _require("household_id", household_id)
@@ -69,8 +76,8 @@ class MeterStore:
         with self._connect() as conn:
             cursor = conn.execute(
                 "INSERT INTO meter_readings (household_id, value_kwh, read_at,"
-                " status, confidence, sam_box, photo_path, created_at)"
-                " VALUES (?, ?, ?, 'proposed', ?, ?, ?, ?)",
+                " status, confidence, sam_box, photo_path, serial, created_at)"
+                " VALUES (?, ?, ?, 'proposed', ?, ?, ?, ?, ?)",
                 (
                     household_id,
                     value_kwh,
@@ -78,6 +85,7 @@ class MeterStore:
                     confidence,
                     sam_box,
                     photo_path,
+                    serial,
                     stamp,
                 ),
             )
@@ -91,6 +99,7 @@ class MeterStore:
             confidence=confidence,
             sam_box=sam_box,
             photo_path=photo_path,
+            serial=serial,
             created_at=datetime.fromisoformat(stamp),
         )
 
@@ -104,7 +113,7 @@ class MeterStore:
         with self._connect() as conn:
             row = conn.execute(
                 "SELECT id, household_id, value_kwh, read_at, status,"
-                " confidence, sam_box, photo_path, created_at"
+                " confidence, sam_box, photo_path, serial, created_at"
                 " FROM meter_readings WHERE household_id = ? AND id = ?",
                 (household_id, reading_id),
             ).fetchone()
@@ -127,6 +136,7 @@ class MeterStore:
                 row[6],
                 row[7],
                 row[8],
+                row[9],
             )
         )
 
@@ -136,7 +146,7 @@ class MeterStore:
         with self._connect() as conn:
             row = conn.execute(
                 "SELECT id, household_id, value_kwh, read_at, status,"
-                " confidence, sam_box, photo_path, created_at"
+                " confidence, sam_box, photo_path, serial, created_at"
                 " FROM meter_readings WHERE household_id = ? AND id = ?",
                 (household_id, reading_id),
             ).fetchone()
@@ -148,7 +158,7 @@ class MeterStore:
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT id, household_id, value_kwh, read_at, status,"
-                " confidence, sam_box, photo_path, created_at"
+                " confidence, sam_box, photo_path, serial, created_at"
                 " FROM meter_readings WHERE household_id = ?"
                 " ORDER BY id ASC LIMIT ?",
                 (household_id, limit),
@@ -165,7 +175,7 @@ class MeterStore:
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT id, household_id, value_kwh, read_at, status,"
-                " confidence, sam_box, photo_path, created_at"
+                " confidence, sam_box, photo_path, serial, created_at"
                 " FROM meter_readings WHERE household_id = ?"
                 " AND status = 'confirmed' ORDER BY read_at ASC, id ASC",
                 (household_id,),
@@ -184,6 +194,7 @@ class MeterStore:
             confidence,
             box,
             photo,
+            serial,
             stamp,
         ) = row
         assert isinstance(id_value, int)
@@ -194,6 +205,7 @@ class MeterStore:
         assert isinstance(confidence, str)
         assert box is None or isinstance(box, str)
         assert isinstance(photo, str)
+        assert serial is None or isinstance(serial, str)
         assert isinstance(stamp, str)
         return MeterReading(
             id=id_value,
@@ -204,5 +216,6 @@ class MeterStore:
             confidence=confidence,
             sam_box=box,
             photo_path=photo,
+            serial=serial,
             created_at=datetime.fromisoformat(stamp),
         )

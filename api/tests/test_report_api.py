@@ -61,6 +61,14 @@ def test_monthly_report_totals(report_setup: TestClient) -> None:
     assert payload["illustration_data_url"] is None
 
 
+def test_report_speaks_english_when_asked(report_setup: TestClient) -> None:
+    response = report_setup.get("/report/monthly?household_id=h1&month=2026-02&lang=en")
+    assert response.status_code == 200
+    joined = " ".join(response.json()["report"]["assumptions"])
+    assert "Annual use" in joined
+    assert "quarter-hourly" in joined
+
+
 def test_illustration_generates_once_then_caches(
     report_setup: TestClient,
 ) -> None:

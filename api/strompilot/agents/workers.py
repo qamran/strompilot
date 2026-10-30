@@ -136,7 +136,7 @@ def scheduler_node(
         if isinstance(learned, dict):
             constraints = apply_learned_windows(constraints, learned)
     loaded: LoadedPrices = price_loader()
-    plan = optimize(constraints, loaded.bars)
+    plan = optimize(constraints, loaded.bars, state.get("lang", "de"))
     schedule = [
         Slot(
             device=slot.device,
@@ -188,6 +188,7 @@ def explainer_node(state: PlanState, router: ChatRouter) -> PlanState:
         state.get("unscheduled", []),
         state.get("price_source", "unknown"),
         router,
+        lang=state.get("lang", "de"),
     )
     citations = [
         CitationState(

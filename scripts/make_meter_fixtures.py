@@ -50,14 +50,15 @@ def draw_digit(draw: ImageDraw.ImageDraw, glyph: str, x: int, y: int) -> None:
 
 
 def draw_display(
-    text: str, font: ImageFont.FreeTypeFont | ImageFont.ImageFont
+    text: str, serial: str, font: ImageFont.FreeTypeFont | ImageFont.ImageFont
 ) -> Image.Image:
-    """Draw one 800x600 meter photo showing the given register text."""
+    """Draw one 800x600 meter photo showing register text plus serial."""
     photo = Image.new("RGB", (800, 600), (58, 60, 64))
     draw = ImageDraw.Draw(photo)
     draw.rectangle((70, 150, 730, 450), fill=(26, 26, 28))
     draw.rectangle((90, 170, 710, 430), fill=(206, 214, 188))
     draw.text((110, 176), "1.8.0", fill=(60, 64, 58), font=font)
+    draw.text((110, 480), f"Nr {serial}", fill=(226, 228, 230), font=font)
     advance = 80
     total = len(text) * advance - 16
     cursor = (800 - total) // 2
@@ -73,13 +74,13 @@ def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     font = ImageFont.load_default(size=28)
     specs = [
-        ("meter_clean", "04217,3", 4217.3),
-        ("meter_obis", "12893,7", 12893.7),
-        ("meter_dim", "00365,0", 365.0),
+        ("meter_clean", "04217,3", 4217.3, "1ESY1162345678"),
+        ("meter_obis", "12893,7", 12893.7, "1ESY1162345679"),
+        ("meter_dim", "00365,0", 365.0, "1ESY1162345680"),
     ]
     sidecar = []
-    for name, text, expected in specs:
-        photo = draw_display(text, font)
+    for name, text, expected, serial in specs:
+        photo = draw_display(text, serial, font)
         if name == "meter_dim":
             dimmed = photo.point(lambda channel: int(channel * 0.55))
             photo = dimmed.convert("RGB")
@@ -89,6 +90,7 @@ def main() -> None:
                 "name": name,
                 "file": f"{name}.png",
                 "expected_kwh": expected,
+                "expected_serial": serial,
                 "lcd": [90, 170, 710, 430],
             }
         )

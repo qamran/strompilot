@@ -52,6 +52,16 @@ def test_watch_fires_and_lists_alerts(watch_setup: TestClient) -> None:
     assert len(listed.json()["alerts"]) == 2
 
 
+def test_watch_speaks_english_when_asked(watch_setup: TestClient) -> None:
+    run = watch_setup.post("/flexalarm/watch?household_id=h1&date=2026-06-01&lang=en")
+    assert run.status_code == 200
+    listed = watch_setup.get("/flexalarm/alerts?household_id=h1")
+    bodies = " ".join(alert["body"] for alert in listed.json()["alerts"])
+    titles = " ".join(alert["title"] for alert in listed.json()["alerts"])
+    assert "on average" in bodies
+    assert "Cheap power" in titles or "Power spike" in titles
+
+
 def test_watch_rerun_dedups(watch_setup: TestClient) -> None:
     first = watch_setup.post("/flexalarm/watch?household_id=h1&date=2026-06-01")
     assert first.json()["fired"] == 2

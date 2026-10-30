@@ -11,7 +11,7 @@ from strompilot.llm.types import ChatRouter, LlmError
 
 from .crop import crop_to_box, pick_box
 from .models import MeterError
-from .read import read_digits
+from .read import read_digits, read_serial
 from .sam import SegmentBox
 
 # Pinned after a live prompt shootout on the meter fixtures: "digital
@@ -35,10 +35,11 @@ class MeterVision:
 
 @dataclass(frozen=True)
 class PhotoProposal:
-    """One processed photo: value, confidence, and the box used."""
+    """One processed photo: value, confidence, serial, and the box used."""
 
     value_kwh: float
     confidence: str
+    serial: str | None
     sam_used: bool
     sam_box: SegmentBox | None
 
@@ -72,6 +73,7 @@ def process_photo(
         return PhotoProposal(
             value_kwh=reading.value_kwh,
             confidence=reading.confidence,
+            serial=read_serial(_encode(photo), mime, router),
             sam_used=False,
             sam_box=None,
         )
@@ -83,12 +85,14 @@ def process_photo(
         return PhotoProposal(
             value_kwh=reading.value_kwh,
             confidence=reading.confidence,
+            serial=read_serial(_encode(photo), mime, router),
             sam_used=False,
             sam_box=None,
         )
     return PhotoProposal(
         value_kwh=reading.value_kwh,
         confidence=reading.confidence,
+        serial=read_serial(_encode(photo), mime, router),
         sam_used=True,
         sam_box=box,
     )

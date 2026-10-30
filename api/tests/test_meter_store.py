@@ -14,6 +14,49 @@ def read_at(day: int) -> datetime:
     return datetime(2026, 6, day, 8, 0, tzinfo=UTC)
 
 
+def test_propose_stores_serial(tmp_path: Path) -> None:
+    store = MeterStore(tmp_path / "meter.db")
+    proposed = store.propose(
+        household_id="hh1",
+        value_kwh=4217.3,
+        read_at=read_at(1),
+        confidence="high",
+        sam_box=None,
+        photo_path="p",
+        serial="1ESY1162345678",
+    )
+    assert proposed.serial == "1ESY1162345678"
+    assert store.get("hh1", proposed.id) is not None
+    assert store.get("hh1", proposed.id).serial == "1ESY1162345678"  # type: ignore[union-attr]
+    (listed,) = store.list_readings("hh1")
+    assert listed.serial == "1ESY1162345678"
+
+
+def test_old_schema_gains_serial_column(tmp_path: Path) -> None:
+    import sqlite3
+
+    db = tmp_path / "meter.db"
+    with sqlite3.connect(db) as conn:
+        conn.executescript(
+            "CREATE TABLE meter_readings (id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            " household_id TEXT NOT NULL, value_kwh REAL NOT NULL,"
+            " read_at TEXT NOT NULL, status TEXT NOT NULL,"
+            " confidence TEXT NOT NULL, sam_box TEXT,"
+            " photo_path TEXT NOT NULL, created_at TEXT NOT NULL);"
+        )
+    store = MeterStore(db)
+    proposed = store.propose(
+        household_id="hh1",
+        value_kwh=10.0,
+        read_at=read_at(1),
+        confidence="high",
+        sam_box=None,
+        photo_path="p",
+        serial="9",
+    )
+    assert store.get("hh1", proposed.id) is not None
+
+
 def test_propose_then_confirm(tmp_path: Path) -> None:
     store = MeterStore(tmp_path / "meter.db")
     proposed = store.propose(

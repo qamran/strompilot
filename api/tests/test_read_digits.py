@@ -5,7 +5,7 @@ import pytest
 from strompilot.llm.client import LOW_EFFORT
 from strompilot.llm.types import ImageAttachment, LlmError
 from strompilot.metervision.models import DigitReading, MeterError
-from strompilot.metervision.read import read_digits
+from strompilot.metervision.read import read_digits, read_serial
 from tests.fakes import FakeRouter, reply
 
 
@@ -33,6 +33,22 @@ def test_prompt_names_the_meter_job() -> None:
     prompt = router.prompts[0]
     assert "kWh" in prompt
     assert "OBIS" in prompt
+
+
+def test_serial_reading_parses() -> None:
+    router = FakeRouter({"analyst": [reply('{"serial": "1ESY1162345678"}')]})
+    assert read_serial("aGk=", "image/png", router) == "1ESY1162345678"
+    assert "serial" in router.prompts[0].lower()
+
+
+def test_serial_missing_reads_back_as_none() -> None:
+    router = FakeRouter({"analyst": [reply('{"serial": null}')]})
+    assert read_serial("aGk=", "image/png", router) is None
+
+
+def test_serial_garbage_reads_back_as_none() -> None:
+    router = FakeRouter({"analyst": [reply("no idea")]})
+    assert read_serial("aGk=", "image/png", router) is None
 
 
 def test_garbage_reply_fails_loudly() -> None:

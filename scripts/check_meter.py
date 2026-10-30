@@ -42,6 +42,8 @@ for fixture in fixtures:
         print(f"FAIL {fixture['name']}: pipeline broke: {exc}")
         continue
     error = abs(proposal.value_kwh - fixture["expected_kwh"])
+    serial_ok = proposal.serial == fixture.get("expected_serial")
+    serial_note = f"serial {proposal.serial}"
     box_note = "no box"
     box_ok = True
     if proposal.sam_box is not None:
@@ -51,16 +53,16 @@ for fixture in fixtures:
         inside = lcd[0] <= center[0] <= lcd[2] and lcd[1] <= center[1] <= lcd[3]
         box_ok = inside
         box_note = f"box {box.x1},{box.y1},{box.x2},{box.y2} c={box.confidence}"
-    if error <= TOLERANCE_KWH and box_ok:
+    if error <= TOLERANCE_KWH and box_ok and serial_ok:
         print(
             f"PASS {fixture['name']}: {proposal.value_kwh} kWh "
-            f"(expected {fixture['expected_kwh']}, {box_note})"
+            f"(expected {fixture['expected_kwh']}, {box_note}, {serial_note})"
         )
     else:
         failures += 1
         print(
             f"FAIL {fixture['name']}: {proposal.value_kwh} kWh "
-            f"(expected {fixture['expected_kwh']}, {box_note})"
+            f"(expected {fixture['expected_kwh']}, {box_note}, {serial_note})"
         )
 
 total_usd = sum(entry.cost_usd or 0.0 for entry in router.spend_log)

@@ -21,7 +21,8 @@ _EURO_UNITS = {"€", "Euro", "euro", "EUR"}
 _EURO_TOLERANCE = 0.06
 _CT_TOLERANCE = 0.6
 
-_SYSTEM = """You are Strompilot, a friendly German energy advisor for
+_SYSTEM = {
+    "de": """You are Strompilot, a friendly German energy advisor for
 households on dynamic tariffs. Turn the plan bullets into a short German
 household message of 4-8 sentences.
 Rules:
@@ -30,38 +31,76 @@ in Euro with 2 decimals.
 - State the total cost in Euro with 2 decimals.
 - Mention unscheduled devices when listed, with one short reason each.
 - Add no times, prices, costs, or devices beyond the bullets.
-- Reply in German, plain words, no markdown headers."""
+- Reply in German, plain words, no markdown headers.""",
+    "en": """You are Strompilot, a friendly energy advisor for
+households on dynamic tariffs. Turn the plan bullets into a short English
+household message of 4-8 sentences.
+Rules:
+- Name every device with its running time in HH:MM format and its cost
+in Euro with 2 decimals.
+- State the total cost in Euro with 2 decimals.
+- Mention unscheduled devices when listed, with one short reason each.
+- Add no times, prices, costs, or devices beyond the bullets.
+- Reply in English, plain words, no markdown headers.""",
+}
 
-_EXAMPLE_BULLETS = """- Waschmaschine: 02:00 bis 04:00, 4,0 kWh,
+_EXAMPLE_BULLETS = {
+    "de": """- Waschmaschine: 02:00 bis 04:00, 4,0 kWh,
 Durchschnitt 15,00 ct/kWh, Kosten 0,60 Euro.
-Gesamtkosten: 0,60 Euro."""
-_EXAMPLE_REPLY = (
-    "Gute Nachricht: Die Waschmaschine läuft von 02:00 bis 04:00 Uhr, "
-    "wenn der Strom mit 15,00 ct pro kWh am billigsten ist. "
-    "Die 4,0 kWh kosten dich 0,60 Euro. "
-    "Die Gesamtkosten für morgen betragen 0,60 Euro."
-)
+Gesamtkosten: 0,60 Euro.""",
+    "en": """- Washing machine: 02:00 to 04:00, 4.00 kWh,
+average 15.00 ct/kWh, cost 0.60 Euro.
+Total cost: 0.60 Euro.""",
+}
+_EXAMPLE_REPLY = {
+    "de": (
+        "Gute Nachricht: Die Waschmaschine läuft von 02:00 bis 04:00 Uhr, "
+        "wenn der Strom mit 15,00 ct pro kWh am billigsten ist. "
+        "Die 4,0 kWh kosten dich 0,60 Euro. "
+        "Die Gesamtkosten für morgen betragen 0,60 Euro."
+    ),
+    "en": (
+        "Good news: the washing machine runs from 02:00 to 04:00, "
+        "when power is cheapest at 15.00 ct per kWh. "
+        "The 4.00 kWh cost you 0.60 Euro. "
+        "The total cost for tomorrow is 0.60 Euro."
+    ),
+}
 
 
-def _euro(value: float) -> str:
-    """Format Euro with German decimal comma."""
-    return f"{value:.2f}".replace(".", ",")
+def _euro(value: float, lang: str) -> str:
+    """Format Euro with a decimal comma (de) or point (en)."""
+    text = f"{value:.2f}"
+    return text.replace(".", ",") if lang == "de" else text
 
 
 def _brief(
     slots: list[ScheduledSlot],
     total_cost_eur: float,
     unscheduled: list[str],
+    lang: str,
 ) -> str:
     """Render the deterministic plan bullets for the draft prompt."""
+    if lang == "en":
+        lines = [
+            f"- {slot.device}: {slot.start} to {slot.end}, "
+            f"{_euro(slot.energy_kwh, lang)} kWh, "
+            f"average {_euro(slot.price_ct_kwh, lang)} ct/kWh, "
+            f"cost {_euro(slot.cost_eur, lang)} Euro."
+            for slot in slots
+        ]
+        lines.append(f"Total cost: {_euro(total_cost_eur, lang)} Euro.")
+        for gap in unscheduled:
+            lines.append(f"Not schedulable: {gap}.")
+        return "\n".join(lines)
     lines = [
         f"- {slot.device}: {slot.start} bis {slot.end}, "
-        f"{_euro(slot.energy_kwh)} kWh, "
-        f"Durchschnitt {_euro(slot.price_ct_kwh)} ct/kWh, "
-        f"Kosten {_euro(slot.cost_eur)} Euro."
+        f"{_euro(slot.energy_kwh, lang)} kWh, "
+        f"Durchschnitt {_euro(slot.price_ct_kwh, lang)} ct/kWh, "
+        f"Kosten {_euro(slot.cost_eur, lang)} Euro."
         for slot in slots
     ]
-    lines.append(f"Gesamtkosten: {_euro(total_cost_eur)} Euro.")
+    lines.append(f"Gesamtkosten: {_euro(total_cost_eur, lang)} Euro.")
     for gap in unscheduled:
         lines.append(f"Nicht planbar: {gap}.")
     return "\n".join(lines)
@@ -73,33 +112,54 @@ def build_citations(
     constraints: HouseholdConstraints,
     unscheduled: list[str],
     price_source: str,
+    lang: str = "de",
 ) -> list[Citation]:
     """Cite every slot, the total, every window, and every gap."""
+    lang = "en" if lang == "en" else "de"
+    joiner = "to" if lang == "en" else "bis"
     citations = [
         Citation(
-            claim=f"{slot.device} läuft {slot.start} bis {slot.end}",
+            claim=f"{slot.device} runs {slot.start} {joiner} {slot.end}"
+            if lang == "en"
+            else f"{slot.device} läuft {slot.start} bis {slot.end}",
             source="day-ahead",
-            detail=(f"Ø {_euro(slot.price_ct_kwh)} ct/kWh all-in ({price_source})"),
+            detail=(
+                f"Ø {_euro(slot.price_ct_kwh, lang)} ct/kWh all-in ({price_source})"
+            ),
         )
         for slot in slots
     ]
     citations.append(
         Citation(
-            claim=f"Gesamtkosten {_euro(total_cost_eur)} Euro",
+            claim=f"Total cost {_euro(total_cost_eur, lang)} Euro"
+            if lang == "en"
+            else f"Gesamtkosten {_euro(total_cost_eur, lang)} Euro",
             source="tariff",
-            detail="all-in inkl. Umlagen und MwSt",
+            detail="all-in incl. levies and VAT"
+            if lang == "en"
+            else "all-in inkl. Umlagen und MwSt",
         )
     )
     for device in constraints.devices:
         if device.shiftable:
-            claim = f"{device.device} flexibel {device.earliest} bis {device.latest}"
+            claim = (
+                f"{device.device} flexible {device.earliest} {joiner} {device.latest}"
+                if lang == "en"
+                else f"{device.device} flexibel {device.earliest} bis {device.latest}"
+            )
         else:
-            claim = f"{device.device} läuft zu fester Zeit"
+            claim = (
+                f"{device.device} runs at a fixed time"
+                if lang == "en"
+                else f"{device.device} läuft zu fester Zeit"
+            )
         citations.append(
             Citation(
                 claim=claim,
                 source="household",
-                detail="Zeitfenster aus Haushaltsangabe",
+                detail="time window from household input"
+                if lang == "en"
+                else "Zeitfenster aus Haushaltsangabe",
             )
         )
     for gap in unscheduled:
@@ -107,7 +167,9 @@ def build_citations(
             Citation(
                 claim=gap,
                 source="planner",
-                detail="kein passendes Fenster im Zieltageszeitraum",
+                detail="no matching window on the target day"
+                if lang == "en"
+                else "kein passendes Fenster im Zieltageszeitraum",
             )
         )
     return citations
@@ -154,14 +216,16 @@ def narrate(
     unscheduled: list[str],
     price_source: str,
     router: ChatRouter,
-    system_prompt: str = _SYSTEM,
+    system_prompt: str | None = None,
+    lang: str = "de",
 ) -> tuple[Narration, str]:
     """Draft the narration with one repair retry plus citations."""
-    brief = _brief(slots, total_cost_eur, unscheduled)
+    lang = "en" if lang == "en" else "de"
+    brief = _brief(slots, total_cost_eur, unscheduled, lang)
     messages = [
-        Message(role="system", content=system_prompt),
-        Message(role="user", content=_EXAMPLE_BULLETS),
-        Message(role="assistant", content=_EXAMPLE_REPLY),
+        Message(role="system", content=system_prompt or _SYSTEM[lang]),
+        Message(role="user", content=_EXAMPLE_BULLETS[lang]),
+        Message(role="assistant", content=_EXAMPLE_REPLY[lang]),
         Message(role="user", content=brief),
     ]
     result = router.chat("explainer", messages, NARRATE_TOKENS, LOW_EFFORT)
@@ -184,7 +248,7 @@ def narrate(
         result = repair
         violations = check_faithfulness(result.content, slots, total_cost_eur)
     citations = build_citations(
-        slots, total_cost_eur, constraints, unscheduled, price_source
+        slots, total_cost_eur, constraints, unscheduled, price_source, lang
     )
     return Narration(
         text=result.content, citations=citations, violations=violations

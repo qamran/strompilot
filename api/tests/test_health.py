@@ -12,7 +12,7 @@ def test_health_returns_ok_with_contract_version() -> None:
     payload = response.json()
     assert payload["status"] == "ok"
     assert payload["service"] == "strompilot-api"
-    assert payload["contract_version"] == "0.8.0"
+    assert payload["contract_version"] == "0.9.0"
 
 
 def test_browser_origin_gets_cors_headers_foreign_origin_does_not() -> None:

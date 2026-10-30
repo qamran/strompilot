@@ -101,6 +101,25 @@ def test_scheduler_optimizes_deterministically() -> None:
     assert update["attribution"] == {"schedule": "deterministic"}
 
 
+def test_scheduler_reasons_follow_state_language() -> None:
+    constraints = HouseholdConstraints(devices=[make_device()]).model_dump()
+    update = scheduler_node(
+        PlanState(request="plane", constraints=constraints, lang="en"), stub_loader
+    )
+    (slot,) = update["schedule"]
+    assert slot["reason"] == "Cheapest hours in the window (Ø 15.00 ct/kWh)"
+
+
+def test_explainer_narrates_in_state_language() -> None:
+    router = FakeRouter({"explainer": [reply("Wash at night.", SPARK_OPEN_MODEL)]})
+    update = explainer_node(PlanState(request="plane", lang="en"), router)
+    assert "Reply in English" in router.prompts[0]
+    joined = " ".join(
+        f"{citation['claim']} {citation['detail']}" for citation in update["citations"]
+    )
+    assert "Total cost" in joined
+
+
 def test_scheduler_rejects_missing_constraints() -> None:
     with pytest.raises(LifeplanError, match="constraints"):
         scheduler_node(PlanState(request="plane"), stub_loader)
