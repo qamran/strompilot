@@ -5,7 +5,13 @@
 import Link from "next/link";
 import { useLang } from "../lib/i18n";
 
-export default function Header({ alarmCount }: { alarmCount: number }) {
+export default function Header({
+  alarmCount,
+  onPalette,
+}: {
+  alarmCount: number;
+  onPalette: () => void;
+}) {
   const { t, lang, setLang } = useLang();
   return (
     <header className="topbar">
@@ -22,6 +28,14 @@ export default function Header({ alarmCount }: { alarmCount: number }) {
         </Link>
         <Link href="/ueber">{t.navAbout}</Link>
       </nav>
+      <button
+        type="button"
+        className="palette-hint"
+        onClick={onPalette}
+        title={t.paletteTitle}
+      >
+        {t.paletteHint}
+      </button>
       <div className="lang-switch" aria-label={t.language}>
         <button
           type="button"

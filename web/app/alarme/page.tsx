@@ -59,7 +59,11 @@ export default function AlarmsPage() {
       {alerts.map((alert) => (
         <article className="alert-card" key={alert.id}>
           <h3>
-            {alert.title} <span className="muted">[{alert.kind}]</span>
+            <span
+              className={`alert-dot ${["cheap", "spike", "negative"].includes(alert.kind) ? alert.kind : "info"}`}
+              aria-hidden="true"
+            />
+            {alert.title} <span className="alert-kind">{alert.kind}</span>
           </h3>
           <p>{alert.body}</p>
           <p className="muted">

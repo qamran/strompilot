@@ -33,12 +33,19 @@ function Gantt({
   schedule: PlanSlot[];
   onSelect: (slot: PlanSlot) => void;
 }) {
+  const now = new Date();
+  const nowPct = ((now.getHours() + now.getMinutes() / 60) / 24) * 100;
   return (
     <div className="gantt">
       {schedule.map((slot) => (
         <div className="gantt-row" key={`${slot.device}-${slot.start}`}>
           <span>{slot.device}</span>
           <div className="gantt-track">
+            <span
+              className="gantt-now"
+              style={{ left: `${nowPct}%` }}
+              aria-hidden="true"
+            />
             <button
               type="button"
               className="gantt-block"
@@ -213,7 +220,7 @@ function FahrplanInner() {
                 className="secondary"
                 onClick={() => judge(slot.device, "good")}
               >
-                👍 {t.feedbackGood}
+                {t.feedbackGood}
               </button>
               <button
                 type="button"

@@ -13,6 +13,13 @@ export default function Odometer({ value }: { value: number }) {
 
   useEffect(() => {
     target.current = value;
+    if (
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches ||
+      value === 0
+    ) {
+      Promise.resolve(value).then(setShown);
+      return;
+    }
     const start = performance.now();
     const from = 0;
     const duration = 1200;

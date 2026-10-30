@@ -1,6 +1,6 @@
 "use client";
 
-/** Preise view: sentence-to-plan entry, heatmap, savings, wallbox strip. */
+/** Preise view: price-now hero, plan entry, heatmap, savings, wallbox. */
 
 import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
@@ -13,7 +13,7 @@ import {
 import type { DayAheadPriceSeries } from "../lib/prices";
 import type { WallboxStatus } from "../lib/wallbox";
 import { useLang } from "../lib/i18n";
-import { formatCt } from "../lib/format";
+import { formatCt, priceClass } from "../lib/format";
 import Heatmap from "../components/Heatmap";
 import Odometer from "../components/Odometer";
 import SourceChip from "../components/SourceChip";
@@ -23,6 +23,14 @@ import ConsentGate from "../components/ConsentGate";
 function currentMonth(): string {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function currentPoint(series: DayAheadPriceSeries): number {
+  const hour = new Date().getHours();
+  const match = series.prices.find(
+    (point) => Number(point.start.slice(11, 13)) === hour,
+  );
+  return (match ?? series.prices[0]).eur_per_mwh;
 }
 
 export default function PricesPage() {
@@ -59,15 +67,54 @@ export default function PricesPage() {
     }
   }
 
-  const avg =
-    series && series.prices.length > 0
-      ? series.prices.reduce((sum, p) => sum + p.eur_per_mwh, 0) /
-        series.prices.length /
-        10
-      : 0;
+  const values = series ? series.prices.map((p) => p.eur_per_mwh / 10) : [];
+  const avg = values.length
+    ? values.reduce((sum, v) => sum + v, 0) / values.length
+    : 0;
+  const min = values.length ? Math.min(...values) : 0;
+  const max = values.length ? Math.max(...values) : 0;
+  const nowCt = series ? currentPoint(series) / 10 : 0;
+  const nowClass = series
+    ? priceClass(currentPoint(series), avg * 10)
+    : "mid";
 
   return (
     <>
+      {series && (
+        <section className="panel hero" aria-label={t.heroNow}>
+          <div className="hero-main">
+            <p className="hero-label">
+              {t.heroNow}
+              <SourceChip source={series.source} />
+            </p>
+            <p className={`hero-price tabular ${nowClass}`}>
+              {formatCt(nowCt, lang)}
+              <span className="muted">/kWh</span>
+            </p>
+          </div>
+          <ul className="hero-stats">
+            <li>
+              <span className="stat-label">{t.statMin}</span>
+              <span className="stat-value tabular">
+                {formatCt(min, lang)}
+              </span>
+            </li>
+            <li>
+              <span className="stat-label">{t.avg}</span>
+              <span className="stat-value tabular">
+                {formatCt(avg, lang)}
+              </span>
+            </li>
+            <li>
+              <span className="stat-label">{t.statMax}</span>
+              <span className="stat-value tabular">
+                {formatCt(max, lang)}
+              </span>
+            </li>
+          </ul>
+        </section>
+      )}
+
       <section className="panel">
         <p className="muted">{t.tagline}</p>
         <ConsentGate text={t.consentPlan}>
@@ -88,10 +135,7 @@ export default function PricesPage() {
       </section>
 
       <section className="panel">
-        <h2>
-          {t.today}
-          {series && <SourceChip source={series.source} />}
-        </h2>
+        <h2>{t.today}</h2>
         {series && <Heatmap series={series} />}
         {series && (
           <GlassBox
@@ -115,15 +159,21 @@ export default function PricesPage() {
       {wallbox && (
         <section className="panel">
           <h2>{t.wallbox}</h2>
-          <p>
-            {!wallbox.plugged && t.unplugged}
-            {wallbox.plugged &&
-              (wallbox.charging
-                ? `${t.charging} ${wallbox.power_kw} kW`
-                : t.idle)}
-            {wallbox.plugged &&
-              ` · ${wallbox.session_kwh.toFixed(1)} kWh ${t.today.toLowerCase()}`}
-          </p>
+          <div className="wallbox-strip">
+            <span
+              className={`wallbox-dot${wallbox.charging ? " on" : ""}`}
+              aria-hidden="true"
+            />
+            <p>
+              {!wallbox.plugged && t.unplugged}
+              {wallbox.plugged &&
+                (wallbox.charging
+                  ? `${t.charging} ${wallbox.power_kw} kW`
+                  : t.idle)}
+              {wallbox.plugged &&
+                ` · ${wallbox.session_kwh.toFixed(1)} kWh ${t.today.toLowerCase()}`}
+            </p>
+          </div>
         </section>
       )}
     </>
