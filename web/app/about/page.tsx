@@ -1,6 +1,6 @@
 "use client";
 
-/** Über view: product story, pipeline, trust, models, sources. */
+/** About view: product story, pipeline, trust, models, sources. */
 
 import { useEffect, useState } from "react";
 import { fetchAlerts, fetchHistory, fetchPrices } from "../../lib/api";

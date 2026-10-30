@@ -82,7 +82,7 @@ test("command palette opens and navigates", async ({ page }) => {
   await expect(box).toBeVisible();
   await box.fill("meter");
   await box.press("Enter");
-  await expect(page).toHaveURL(/\/zaehler/);
+  await expect(page).toHaveURL(/\/meter/);
 });
 
 test("plan journey completes, approves, and learns", async ({
@@ -95,14 +95,14 @@ test("plan journey completes, approves, and learns", async ({
     .getByRole("textbox", { name: "Make a plan" })
     .fill("Night shift, baby sleeps by 10 pm, car must be full by 07:00");
   await page.getByRole("button", { name: "Make a plan" }).click();
-  await expect(page).toHaveURL(/\/fahrplan\?thread=/, {
+  await expect(page).toHaveURL(/\/plan\?thread=/, {
     timeout: 60_000,
   });
   await expect(
     page.getByText("The plan waits for your approval."),
   ).toBeVisible({ timeout: 540_000 });
   await expect(page.locator(".gantt-block").first()).toBeVisible();
-  await page.screenshot({ path: join(SHOTS, "fahrplan.png") });
+  await page.screenshot({ path: join(SHOTS, "plan.png") });
   await page.locator(".gantt-block").first().click();
   const overlay = page.getByRole("dialog", { name: "Why this block?" });
   await expect(overlay).toBeVisible();
@@ -122,7 +122,7 @@ test("plan journey completes, approves, and learns", async ({
 });
 
 test("meter upload reads and confirms", async ({ page }) => {
-  await page.goto("/zaehler");
+  await page.goto("/meter");
   await agreeConsent(page, "photo");
   const rows = page.locator("section ul li");
   const before = await rows.count();
@@ -140,11 +140,11 @@ test("meter upload reads and confirms", async ({ page }) => {
   await expect(fresh.getByText("confirmed")).toBeVisible({
     timeout: 60_000,
   });
-  await page.screenshot({ path: join(SHOTS, "zaehler.png") });
+  await page.screenshot({ path: join(SHOTS, "meter.png") });
 });
 
 test("alarms trigger a watch", async ({ page }) => {
-  await page.goto("/alarme");
+  await page.goto("/alarms");
   const cards = page.locator(".alert-card");
   const before = await cards.count();
   await page.getByRole("button", { name: "Check now" }).click();
@@ -154,11 +154,18 @@ test("alarms trigger a watch", async ({ page }) => {
   if ((await cards.count()) > before) {
     await expect(cards.last().getByText("on average")).toBeVisible();
   }
-  await page.screenshot({ path: join(SHOTS, "alarme.png") });
+  await page.screenshot({ path: join(SHOTS, "alarms.png") });
+});
+
+test("old German routes redirect to English ones", async ({ page }) => {
+  await page.goto("/fahrplan");
+  await expect(page).toHaveURL(/\/plan$/);
+  await page.goto("/ueber");
+  await expect(page).toHaveURL(/\/about$/);
 });
 
 test("about view renders", async ({ page }) => {
-  await page.goto("/ueber");
+  await page.goto("/about");
   await expect(page.getByText("About Strompilot")).toBeVisible();
   await expect(page.getByText("How a plan is made")).toBeVisible();
   await expect(page.getByText("Cheapest hour today")).toBeVisible();
@@ -167,5 +174,5 @@ test("about view renders", async ({ page }) => {
   await expect(page.getByText("Why you can trust it")).toBeVisible();
   await expect(page.getByText("Muse Spark 1.3 (Meta)")).toBeVisible();
   await expect(page.getByText("Non-binding orientation").first()).toBeVisible();
-  await page.screenshot({ path: join(SHOTS, "ueber.png"), fullPage: true });
+  await page.screenshot({ path: join(SHOTS, "about.png"), fullPage: true });
 });

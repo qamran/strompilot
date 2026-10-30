@@ -20,13 +20,13 @@ export default function Header({
       </Link>
       <nav>
         <Link href="/">{t.navPrices}</Link>
-        <Link href="/fahrplan">{t.navSchedule}</Link>
-        <Link href="/zaehler">{t.navMeter}</Link>
-        <Link href="/alarme">
+        <Link href="/plan">{t.navSchedule}</Link>
+        <Link href="/meter">{t.navMeter}</Link>
+        <Link href="/alarms">
           {t.navAlarms}
           {alarmCount > 0 && <span className="alarm-badge">{alarmCount}</span>}
         </Link>
-        <Link href="/ueber">{t.navAbout}</Link>
+        <Link href="/about">{t.navAbout}</Link>
       </nav>
       <button
         type="button"

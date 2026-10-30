@@ -62,7 +62,7 @@ export default function PricesPage() {
     if (!text.trim() || !consented) return;
     try {
       const created = await startPlan(text.trim(), lang);
-      router.push(`/fahrplan?thread=${encodeURIComponent(created.thread_id)}`);
+      router.push(`/plan?thread=${encodeURIComponent(created.thread_id)}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }

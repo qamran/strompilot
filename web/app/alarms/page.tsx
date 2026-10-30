@@ -1,6 +1,6 @@
 "use client";
 
-/** Alarme view: flex alarm list plus manual watcher trigger. */
+/** Alarms view: flex alarm list plus manual watcher trigger. */
 
 import { useEffect, useState } from "react";
 import { fetchAlerts, triggerWatch } from "../../lib/api";

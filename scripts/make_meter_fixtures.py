@@ -119,16 +119,16 @@ def draw_meter(
     )
     # Printed header block.
     draw.text((130, 178), "eHZ", fill=(40, 42, 46), font=title)
-    draw.text((130, 228), "Drehstromzähler  3x230/400V  50Hz", fill=(70, 72, 76), font=label)
+    draw.text(
+        (130, 228), "Drehstromzähler  3x230/400V  50Hz", fill=(70, 72, 76), font=label
+    )
     draw.text((130, 262), f"Cl. B   {year}   MID", fill=(90, 92, 96), font=label)
     draw_screw(draw, 128, 900)
     draw_screw(draw, 632, 900)
     # LCD window: black bezel, lit panel, soft glare.
     draw.rounded_rectangle(LCD_OUTER, radius=10, fill=(18, 18, 20))
     draw.rounded_rectangle(LCD_INNER, radius=4, fill=(199, 208, 182))
-    draw.polygon(
-        [(170, 350), (215, 350), (175, 550), (170, 550)], fill=(216, 224, 198)
-    )
+    draw.polygon([(170, 350), (215, 350), (175, 550), (170, 550)], fill=(216, 224, 198))
     draw.text((190, 358), "1.8.0", fill=(60, 64, 58), font=label)
     advance = 56
     total = len(text) * advance - 10
@@ -143,7 +143,12 @@ def draw_meter(
     draw.text((150, 730), "1.8.0 Bezug Gesamt", fill=(90, 92, 96), font=small)
     # Terminal cover seam.
     draw.line([(110, 850), (650, 850)], fill=(150, 153, 148), width=3)
-    draw.text((150, 800), "Klemmendeckel nur durch Fachkraft öffnen", fill=(110, 112, 116), font=small)
+    draw.text(
+        (150, 800),
+        "Klemmendeckel nur durch Fachkraft öffnen",
+        fill=(110, 112, 116),
+        font=small,
+    )
     return photo
 
 

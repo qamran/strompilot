@@ -57,5 +57,20 @@ def test_same_instant_cannot_calibrate() -> None:
     assert calibrate([first, second]) is None
 
 
+def test_same_day_readings_cannot_calibrate() -> None:
+    from datetime import timedelta
+
+    first = reading(1, 4000.0, 1)
+    second = MeterReading(
+        **{
+            **first.model_dump(),
+            "id": 2,
+            "value_kwh": 4010.0,
+            "read_at": first.read_at + timedelta(hours=6),
+        },
+    )
+    assert calibrate([first, second]) is None
+
+
 def test_fallback_is_a_documented_typical_household() -> None:
     assert FALLBACK_ANNUAL_KWH == 3500.0

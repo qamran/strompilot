@@ -25,10 +25,10 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
 
   const entries: Entry[] = [
     { label: t.navPrices, hint: "/", run: () => go("/") },
-    { label: t.navSchedule, hint: "/fahrplan", run: () => go("/fahrplan") },
-    { label: t.navMeter, hint: "/zaehler", run: () => go("/zaehler") },
-    { label: t.navAlarms, hint: "/alarme", run: () => go("/alarme") },
-    { label: t.navAbout, hint: "/ueber", run: () => go("/ueber") },
+    { label: t.navSchedule, hint: "/plan", run: () => go("/plan") },
+    { label: t.navMeter, hint: "/meter", run: () => go("/meter") },
+    { label: t.navAlarms, hint: "/alarms", run: () => go("/alarms") },
+    { label: t.navAbout, hint: "/about", run: () => go("/about") },
     {
       label: t.language,
       hint: lang === "de" ? "EN" : "DE",
@@ -39,10 +39,10 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
     },
     {
       label: t.watchNow,
-      hint: "/alarme",
+      hint: "/alarms",
       run: () => {
         triggerWatch(lang).catch(() => {});
-        go("/alarme");
+        go("/alarms");
       },
     },
   ];

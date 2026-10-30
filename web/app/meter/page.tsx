@@ -1,6 +1,6 @@
 "use client";
 
-/** Zähler view: meter photo upload behind consent, readings, confirm. */
+/** Meter view: meter photo upload behind consent, readings, confirm. */
 
 import { useEffect, useState } from "react";
 import {

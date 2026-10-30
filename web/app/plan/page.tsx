@@ -1,6 +1,6 @@
 "use client";
 
-/** Fahrplan view: Gantt schedule, approvals, feedback, trace, report. */
+/** Plan view: Gantt schedule, approvals, feedback, trace, report. */
 
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
@@ -72,7 +72,7 @@ function currentMonth(): string {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 }
 
-function FahrplanInner() {
+function PlanInner() {
   const { t, lang } = useLang();
   const params = useSearchParams();
   const threadId = params.get("thread") ?? "";
@@ -288,10 +288,10 @@ function FahrplanInner() {
   );
 }
 
-export default function FahrplanPage() {
+export default function PlanPage() {
   return (
     <Suspense>
-      <FahrplanInner />
+      <PlanInner />
     </Suspense>
   );
 }
