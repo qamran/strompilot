@@ -161,6 +161,9 @@ test("about view renders", async ({ page }) => {
   await page.goto("/ueber");
   await expect(page.getByText("About Strompilot")).toBeVisible();
   await expect(page.getByText("How a plan is made")).toBeVisible();
+  await expect(page.getByText("Cheapest hour today")).toBeVisible();
+  await expect(page.getByText("Alerts delivered")).toBeVisible();
+  await expect(page.getByText("Feedback given")).toBeVisible();
   await expect(page.getByText("Why you can trust it")).toBeVisible();
   await expect(page.getByText("Muse Spark 1.3 (Meta)")).toBeVisible();
   await expect(page.getByText("Non-binding orientation").first()).toBeVisible();

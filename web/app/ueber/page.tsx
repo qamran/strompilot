@@ -2,7 +2,16 @@
 
 /** Über view: product story, pipeline, trust, models, sources. */
 
+import { useEffect, useState } from "react";
+import { fetchAlerts, fetchHistory, fetchPrices } from "../../lib/api";
+import { formatCt } from "../../lib/format";
 import { useLang } from "../../lib/i18n";
+
+interface LiveStats {
+  cheapest: string | null;
+  alerts: number | null;
+  feedback: number | null;
+}
 
 const MODELS: { name: string; roleKey: "roleSpark" | "roleOpen" | "roleWonder" | "roleSam" | "roleImage" }[] = [
   { name: "Muse Spark 1.3 (Meta)", roleKey: "roleSpark" },
@@ -13,7 +22,42 @@ const MODELS: { name: string; roleKey: "roleSpark" | "roleOpen" | "roleWonder" |
 ];
 
 export default function AboutPage() {
-  const { t } = useLang();
+  const { t, lang } = useLang();
+  const [stats, setStats] = useState<LiveStats>({
+    cheapest: null,
+    alerts: null,
+    feedback: null,
+  });
+
+  useEffect(() => {
+    let live = true;
+    async function load() {
+      const [prices, alerts, history] = await Promise.allSettled([
+        fetchPrices(),
+        fetchAlerts(),
+        fetchHistory(),
+      ]);
+      if (!live) return;
+      let cheapest: string | null = null;
+      if (prices.status === "fulfilled" && prices.value.prices.length > 0) {
+        const low = prices.value.prices.reduce((a, b) =>
+          a.eur_per_mwh <= b.eur_per_mwh ? a : b,
+        );
+        cheapest = `${low.start.slice(11, 13)}:00 · ${formatCt(low.eur_per_mwh / 10, lang)}/kWh`;
+      }
+      setStats({
+        cheapest,
+        alerts:
+          alerts.status === "fulfilled" ? alerts.value.length : null,
+        feedback:
+          history.status === "fulfilled" ? history.value.episodes.length : null,
+      });
+    }
+    load().catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [lang]);
   const steps = [
     { title: t.step1Title, body: t.step1Body },
     { title: t.step2Title, body: t.step2Body },
@@ -34,6 +78,20 @@ export default function AboutPage() {
         <h2>{t.aboutTitle}</h2>
         <p className="lede">{t.tagline}</p>
         <p>{t.aboutIntro}</p>
+        <dl className="stats">
+          <div>
+            <dt>{t.statsCheapest}</dt>
+            <dd>{stats.cheapest ?? "–"}</dd>
+          </div>
+          <div>
+            <dt>{t.statsAlerts}</dt>
+            <dd>{stats.alerts ?? "–"}</dd>
+          </div>
+          <div>
+            <dt>{t.statsFeedback}</dt>
+            <dd>{stats.feedback ?? "–"}</dd>
+          </div>
+        </dl>
         <ol className="steps">
           {steps.map((step) => (
             <li key={step.title}>

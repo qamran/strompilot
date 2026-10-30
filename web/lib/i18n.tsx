@@ -106,6 +106,9 @@ const STRINGS = {
     step3Title: "Du gibst frei",
     step3Body:
       "Du siehst den Plan mit Begründung, Kosten und Quellen, und entscheidest.",
+    statsCheapest: "Günstigste Stunde heute",
+    statsAlerts: "Zugestellte Alarme",
+    statsFeedback: "Rückmeldungen",
     pipeTitle: "So entsteht ein Plan",
     pipe1Name: "Verstehen",
     pipe1Body: "Erkennt, ob dein Text Planung bedeutet.",
@@ -239,6 +242,9 @@ const STRINGS = {
     step3Title: "You approve",
     step3Body:
       "You see the plan with reasons, costs, and sources, and you decide.",
+    statsCheapest: "Cheapest hour today",
+    statsAlerts: "Alerts delivered",
+    statsFeedback: "Feedback given",
     pipeTitle: "How a plan is made",
     pipe1Name: "Perceive",
     pipe1Body: "Decides whether your text means planning.",
