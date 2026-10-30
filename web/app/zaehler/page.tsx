@@ -65,7 +65,7 @@ export default function MeterPage() {
     <>
       <section className="panel">
         <h2>{t.navMeter}</h2>
-        <ConsentGate text={t.consentPhoto}>
+        <ConsentGate text={t.consentPhoto} storageKey="photo">
           {() => (
             <>
               <input

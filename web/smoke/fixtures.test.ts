@@ -16,6 +16,7 @@ import Odometer from "../components/Odometer";
 import WhyOverlay from "../components/WhyOverlay";
 import GlassBox from "../components/GlassBox";
 import SourceChip from "../components/SourceChip";
+import ConsentGate from "../components/ConsentGate";
 import pricesFixture from "../fixtures/prices.json";
 import planFixture from "../fixtures/plan.json";
 import alertsFixture from "../fixtures/alerts.json";
@@ -97,10 +98,23 @@ describe("key views on fixtures", () => {
         source: "test",
       }),
     );
-    expect(html).toContain("Formel");
+    expect(html).toContain("Formula");
     const chip = withLang(
       React.createElement(SourceChip, { source: "sample" }),
     );
-    expect(chip).toContain("Beispieldaten");
+    expect(chip).toContain("Sample data");
+  });
+
+  it("renders consent as a modal that hides its content", () => {
+    const html = withLang(
+      React.createElement(ConsentGate, {
+        text: "Consent text here",
+        storageKey: "plan",
+        children: () => "secret plan form",
+      }),
+    );
+    expect(html).toContain("overlay");
+    expect(html).toContain("I agree");
+    expect(html).not.toContain("secret plan form");
   });
 });

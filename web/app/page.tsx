@@ -117,7 +117,7 @@ export default function PricesPage() {
 
       <section className="panel">
         <p className="muted">{t.tagline}</p>
-        <ConsentGate text={t.consentPlan}>
+        <ConsentGate text={t.consentPlan} storageKey="plan">
           {() => (
             <form className="plan-form" onSubmit={submit}>
               <input
@@ -136,6 +136,7 @@ export default function PricesPage() {
 
       <section className="panel">
         <h2>{t.today}</h2>
+        {!series && !error && <p className="muted">{t.loading}</p>}
         {series && <Heatmap series={series} />}
         {series && (
           <GlassBox

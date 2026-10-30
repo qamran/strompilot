@@ -2,7 +2,13 @@
 
 /** German/English strings for the Leitstand. */
 
-import { createContext, useContext, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  type ReactNode,
+} from "react";
 
 export type Lang = "de" | "en";
 
@@ -50,6 +56,8 @@ const STRINGS = {
       "Unser Feed ist stündlich, dynamische Tarife rechnen viertelstundlich ab.",
     worstHour: "Teuerste Stunde",
     consentTitle: "Einwilligung",
+    consentOk: "Einverstanden",
+    loading: "Lädt …",
     consentPhoto:
       "Ich stimme zu, dass mein Zählerfoto zur Ablesung an die KI-Modelle (Meta, Baseten) gesendet wird. Das Foto wird nicht gespeichert.",
     consentPlan:
@@ -138,6 +146,8 @@ const STRINGS = {
       "Our feed is hourly while dynamic tariffs settle quarter-hourly.",
     worstHour: "Most expensive hour",
     consentTitle: "Consent",
+    consentOk: "I agree",
+    loading: "Loading …",
     consentPhoto:
       "I agree that my meter photo is sent to the AI models (Meta, Baseten) for reading. The photo is not stored.",
     consentPlan:
@@ -194,13 +204,16 @@ interface LangContext {
 }
 
 const Context = createContext<LangContext>({
-  lang: "de",
+  lang: "en",
   setLang: () => {},
-  t: STRINGS.de,
+  t: STRINGS.en,
 });
 
 export function LangProvider({ children }: { children: ReactNode }) {
-  const [lang, setLang] = useState<Lang>("de");
+  const [lang, setLang] = useState<Lang>("en");
+  useEffect(() => {
+    document.documentElement.lang = lang;
+  }, [lang]);
   return (
     <Context.Provider value={{ lang, setLang, t: STRINGS[lang] }}>
       {children}
