@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install ./api
+          pip install mypy pytest ruff
+      - name: Backend tests (includes offline evals)
+        run: python -m pytest api/tests
+      - name: Ruff lint and format
+        run: |
+          ruff check api scripts evals
+          ruff format --check api scripts evals
+      - name: Mypy
+        run: mypy --config-file api/pyproject.toml api/strompilot api/wallbox api/tests
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install frontend
+        run: npm ci
+        working-directory: web
+      - name: Frontend tests (includes fixture smoke suite)
+        run: npm test
+        working-directory: web
+      - name: Typecheck and lint
+        run: |
+          npm run typecheck
+          npm run lint
+        working-directory: web
+      - name: Production build
+        run: npm run build
+        working-directory: web

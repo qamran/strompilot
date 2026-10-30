@@ -84,6 +84,7 @@ class ModelRouter:
                 "explainer": (spark_open, spark),
                 "critic": (wonder, spark),
                 "watcher": (spark_open, spark),
+                "judge": (spark_open, spark),
             }
         )
 

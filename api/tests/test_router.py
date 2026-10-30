@@ -139,13 +139,14 @@ def test_from_keys_pins_production_assignments(
 
     monkeypatch.setattr(httpx, "post", fake_post)
     router = ModelRouter.from_keys("meta-key", "baseten-key")
-    for worker in ["supervisor", "analyst", "explainer", "critic", "watcher"]:
+    for worker in ["supervisor", "analyst", "explainer", "critic", "watcher", "judge"]:
         router.chat(worker, [Message(role="user", content="x")], 10)
     assert models == [
         SPARK_MODEL,
         SPARK_MODEL,
         SPARK_OPEN_MODEL,
         WONDER_MODEL,
+        SPARK_OPEN_MODEL,
         SPARK_OPEN_MODEL,
     ]
 

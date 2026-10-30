@@ -96,16 +96,21 @@ def _parse(content: str) -> tuple[list[str], HouseholdConstraints]:
     return list(facts), constraints
 
 
-def analyze(text: str, router: ChatRouter) -> Analysis:
-    """Extract facts plus constraints with one repair retry."""
-    messages = [
-        Message(role="system", content=_SYSTEM),
+def build_messages(text: str, system_prompt: str = _SYSTEM) -> list[Message]:
+    """Build the analyst prompt, swapping the system prompt for A/B runs."""
+    return [
+        Message(role="system", content=system_prompt),
         Message(role="user", content=_EXAMPLE_USER),
         Message(role="assistant", content=_EXAMPLE_REPLY),
         Message(role="user", content=_ATTACK_USER),
         Message(role="assistant", content=_ATTACK_REPLY),
         Message(role="user", content=quote_user_text(text)),
     ]
+
+
+def analyze(text: str, router: ChatRouter, system_prompt: str = _SYSTEM) -> Analysis:
+    """Extract facts plus constraints with one repair retry."""
+    messages = build_messages(text, system_prompt)
     result = router.chat(
         "analyst", messages, ANALYZE_TOKENS, LOW_EFFORT, ANALYZE_TEMPERATURE
     )

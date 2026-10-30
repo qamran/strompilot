@@ -154,11 +154,12 @@ def narrate(
     unscheduled: list[str],
     price_source: str,
     router: ChatRouter,
+    system_prompt: str = _SYSTEM,
 ) -> tuple[Narration, str]:
     """Draft the narration with one repair retry plus citations."""
     brief = _brief(slots, total_cost_eur, unscheduled)
     messages = [
-        Message(role="system", content=_SYSTEM),
+        Message(role="system", content=system_prompt),
         Message(role="user", content=_EXAMPLE_BULLETS),
         Message(role="assistant", content=_EXAMPLE_REPLY),
         Message(role="user", content=brief),
