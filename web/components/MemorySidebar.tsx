@@ -50,6 +50,12 @@ export default function MemorySidebar() {
       const count = Object.keys(value).length;
       return `${count} ${t.memoryDevices.toLowerCase()}`;
     }
+    if (key === "quiet_hours" && typeof value === "object" && value !== null) {
+      const range = value as { start?: unknown; end?: unknown };
+      if (typeof range.start === "string" && typeof range.end === "string") {
+        return `${range.start} – ${range.end}`;
+      }
+    }
     if (Array.isArray(value)) return value.map(String).join(", ");
     return JSON.stringify(value) ?? "";
   }
@@ -74,6 +80,11 @@ export default function MemorySidebar() {
 
   useEffect(() => {
     refresh();
+    const onMemory = () => refresh();
+    window.addEventListener("strompilot:memory", onMemory);
+    return () => {
+      window.removeEventListener("strompilot:memory", onMemory);
+    };
   }, [refresh]);
 
   async function forget(key: string) {

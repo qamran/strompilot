@@ -61,6 +61,7 @@ export default function MeterPage() {
       );
       setNote(res.note);
       await load();
+      window.dispatchEvent(new Event("strompilot:memory"));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }

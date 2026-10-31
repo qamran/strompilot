@@ -27,6 +27,7 @@ export default function Header({
           {alarmCount > 0 && <span className="alarm-badge">{alarmCount}</span>}
         </Link>
         <Link href="/about">{t.navAbout}</Link>
+        <Link href="/household">{t.navHousehold}</Link>
       </nav>
       <button
         type="button"

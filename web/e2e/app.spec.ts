@@ -157,6 +157,38 @@ test("alarms trigger a watch", async ({ page }) => {
   await page.screenshot({ path: join(SHOTS, "alarms.png") });
 });
 
+test("household manages devices and settings", async ({ page }) => {
+  const devices = page.locator('section[aria-label="Devices"]');
+  await page.goto("/household");
+  await page
+    .getByRole("textbox", { name: "e.g. heat pump" })
+    .fill("E2E Heater");
+  await page.getByRole("button", { name: "Add" }).click();
+  await expect(devices.getByText("E2E Heater")).toBeVisible();
+  await page.reload();
+  await expect(devices.getByText("E2E Heater")).toBeVisible();
+  const quiet = page.locator('section[aria-label="Quiet hours"]');
+  await quiet.locator('input[type="time"]').first().fill("22:00");
+  await quiet.locator('input[type="time"]').nth(1).fill("06:00");
+  await quiet.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Saved.").first()).toBeVisible();
+  const annual = page.locator('section[aria-label="Annual use"]');
+  await annual.locator('input[type="number"]').fill("3500");
+  await annual.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Saved.").first()).toBeVisible();
+  await page.reload();
+  await expect(quiet.locator('input[type="time"]').first()).toHaveValue(
+    "22:00",
+  );
+  await expect(annual.locator('input[type="number"]')).toHaveValue("3500");
+  await devices
+    .locator("li", { hasText: "E2E Heater" })
+    .getByRole("button", { name: "Remove" })
+    .click();
+  await expect(devices.getByText("E2E Heater")).toBeHidden();
+  await page.screenshot({ path: join(SHOTS, "household.png") });
+});
+
 test("old German routes redirect to English ones", async ({ page }) => {
   await page.goto("/fahrplan");
   await expect(page).toHaveURL(/\/plan$/);

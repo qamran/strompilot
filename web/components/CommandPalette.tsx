@@ -29,6 +29,7 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
     { label: t.navMeter, hint: "/meter", run: () => go("/meter") },
     { label: t.navAlarms, hint: "/alarms", run: () => go("/alarms") },
     { label: t.navAbout, hint: "/about", run: () => go("/about") },
+    { label: t.navHousehold, hint: "/household", run: () => go("/household") },
     {
       label: t.language,
       hint: lang === "de" ? "EN" : "DE",

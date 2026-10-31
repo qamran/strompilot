@@ -130,6 +130,7 @@ function PlanInner() {
   async function judge(device: string, verdict: FeedbackVerdict) {
     await submitFeedback(device, verdict);
     setFeedbackMsg(t.feedbackThanks);
+    window.dispatchEvent(new Event("strompilot:memory"));
   }
 
   async function makeArt() {

@@ -1,10 +1,11 @@
 """Seed one rich demo household through the real API.
 
-Builds a complete showcase case for demo-haushalt: a full plan run that
-pauses, gets approved, and collects feedback; two meter photos with
-serials, photos, and calibration; plus one watcher pass. Every row is
-created through the public endpoints, so the data is exactly what real
-usage produces. Run from the repo root with the backend up:
+Builds a complete showcase case for demo-haushalt: household prefs
+(devices, quiet hours, annual use); a full plan run that pauses, gets
+approved, and collects feedback; two meter photos with serials,
+photos, and calibration; plus one watcher pass. Every row is created
+through the public endpoints, so the data is exactly what real usage
+produces. Run from the repo root with the backend up:
 
     .venv\\Scripts\\python.exe scripts/seed_demo.py
 
@@ -50,6 +51,19 @@ def main() -> None:
     args = parser.parse_args()
     household = args.household
     client = httpx.Client(base_url=args.api, timeout=TIMEOUT)
+
+    prefs = {
+        "devices": ["Waschmaschine", "Geschirrspueler", "E-Auto"],
+        "quiet_hours": {"start": "22:00", "end": "06:00"},
+        "annual_kwh": 3500,
+    }
+    for key, value in prefs.items():
+        stored = client.put(
+            f"/memory/preferences/{key}?household_id={household}",
+            json={"value": value},
+        )
+        stored.raise_for_status()
+    print(f"household prefs stored: {', '.join(prefs)}")
 
     created = client.post(
         "/plan",

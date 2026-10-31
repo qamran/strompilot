@@ -208,6 +208,20 @@ export function fetchPreferences(): Promise<PreferencesMap> {
   return request(household("/memory/preferences"), parsePreferencesMap);
 }
 
+export async function savePreference(key: string, value: unknown): Promise<void> {
+  const res = await fetch(
+    `${API_URL}${household(`/memory/preferences/${encodeURIComponent(key)}`)}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value }),
+    },
+  );
+  if (!res.ok) {
+    throw new Error(`API ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  }
+}
+
 export async function forgetPreference(key: string): Promise<void> {
   const res = await fetch(
     `${API_URL}${household(`/memory/preferences/${encodeURIComponent(key)}`)}`,
@@ -220,6 +234,25 @@ export async function forgetPreference(key: string): Promise<void> {
 
 export function fetchHistory(): Promise<EpisodesList> {
   return request(household("/memory/history"), parseEpisodesList);
+}
+
+export async function deleteEpisode(episodeId: number): Promise<void> {
+  const res = await fetch(
+    `${API_URL}${household(`/memory/history/${episodeId}`)}`,
+    { method: "DELETE" },
+  );
+  if (!res.ok) {
+    throw new Error(`API ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  }
+}
+
+export async function forgetHousehold(): Promise<void> {
+  const res = await fetch(`${API_URL}${household("/memory/household")}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    throw new Error(`API ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  }
 }
 
 export function fetchMonthlyReport(

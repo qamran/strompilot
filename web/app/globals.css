@@ -234,6 +234,38 @@ select {
   font-size: 0.78rem;
 }
 
+/* ---- forms ---- */
+
+.form-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: flex-end;
+  margin-top: 0.8rem;
+}
+
+.form-row label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.flash {
+  color: var(--green);
+}
+
+.panel.danger {
+  border-color: var(--red);
+}
+
+button.armed {
+  background: var(--red);
+  border-color: var(--red);
+  color: #1a0505;
+}
+
 /* ---- panels ---- */
 
 .panel {
