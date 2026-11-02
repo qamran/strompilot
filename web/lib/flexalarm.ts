@@ -11,6 +11,8 @@ export interface Alert {
   channel: string | null;
   reason: string;
   created_at: string;
+  delivered_at: string | null;
+  last_error: string | null;
 }
 
 export interface AlertsResponse {
@@ -46,7 +48,13 @@ function parseAlert(value: unknown): Alert {
     typeof record.status !== "string" ||
     (record.channel !== null && typeof record.channel !== "string") ||
     typeof record.reason !== "string" ||
-    typeof record.created_at !== "string"
+    typeof record.created_at !== "string" ||
+    (record.delivered_at !== null &&
+      record.delivered_at !== undefined &&
+      typeof record.delivered_at !== "string") ||
+    (record.last_error !== null &&
+      record.last_error !== undefined &&
+      typeof record.last_error !== "string")
   ) {
     throw new Error("Alert has invalid fields");
   }
@@ -61,6 +69,10 @@ function parseAlert(value: unknown): Alert {
     channel: record.channel,
     reason: record.reason,
     created_at: record.created_at,
+    delivered_at:
+      typeof record.delivered_at === "string" ? record.delivered_at : null,
+    last_error:
+      typeof record.last_error === "string" ? record.last_error : null,
   };
 }
 

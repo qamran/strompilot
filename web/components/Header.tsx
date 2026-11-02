@@ -32,6 +32,7 @@ export default function Header({
         </Link>
         <Link href="/about">{t.navAbout}</Link>
         <Link href="/household">{t.navHousehold}</Link>
+        <Link href="/solar">{t.navSolar}</Link>
       </nav>
       {me ? (
         <Link href="/account" className="account-link">

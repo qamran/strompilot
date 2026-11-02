@@ -3,6 +3,8 @@
 import { parseHealthResponse, type HealthResponse } from "./contract";
 import { parseAlertsResponse, parseWatchReport } from "./flexalarm";
 import type { Alert, WatchReport } from "./flexalarm";
+import { parseMeasureResponse, parsePreviewResponse } from "./solar";
+import type { MeasureResponse, PreviewResponse } from "./solar";
 import {
   parseConfirmResponse,
   parseReadingsResponse,
@@ -158,6 +160,41 @@ export function startPlan(
 
 export function fetchPlan(threadId: string): Promise<PlanDetail> {
   return request(`/plan/${encodeURIComponent(threadId)}`, parsePlanDetail);
+}
+
+export async function measureRoof(
+  file: File,
+  widthM: number | undefined,
+  lang: Lang,
+): Promise<MeasureResponse> {
+  const form = new FormData();
+  form.append("file", file);
+  const width = widthM !== undefined ? `&roof_width_m=${widthM}` : "";
+  const res = await fetch(
+    `${API_URL}${household("/solar/measure", lang)}${width}`,
+    { method: "POST", body: form, credentials: "include" },
+  );
+  if (!res.ok) {
+    throw new Error(`API ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  }
+  return parseMeasureResponse(await res.json());
+}
+
+export async function previewStyle(
+  file: File,
+  style: string,
+  lang: Lang,
+): Promise<PreviewResponse> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(
+    `${API_URL}${household("/solar/preview", lang)}&style=${encodeURIComponent(style)}`,
+    { method: "POST", body: form, credentials: "include" },
+  );
+  if (!res.ok) {
+    throw new Error(`API ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  }
+  return parsePreviewResponse(await res.json());
 }
 
 export function traceUrl(threadId: string): string {

@@ -215,6 +215,19 @@ test("household manages devices and settings", async ({ page }) => {
   await page.screenshot({ path: join(SHOTS, "household.png") });
 });
 
+test("solar view gates and offers measuring", async ({ page }) => {
+  await page.goto("/solar");
+  await expect(page.getByText("Please sign in.")).toBeVisible();
+  await signIn(page, "e2e-solar@example.de");
+  await page.goto("/solar");
+  await expect(page.getByLabel("House photo", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Measure roof" }),
+  ).toBeDisabled();
+  await expect(page.getByText("Renovation preview")).toBeVisible();
+  await page.screenshot({ path: join(SHOTS, "solar.png") });
+});
+
 test("old German routes redirect to English ones", async ({ page }) => {
   await page.goto("/fahrplan");
   await expect(page).toHaveURL(/\/plan$/);

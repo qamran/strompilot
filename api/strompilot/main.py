@@ -2,6 +2,7 @@
 
 import base64
 import hashlib
+import io
 import logging
 import os
 import re
@@ -34,6 +35,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
+from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel
 
 from strompilot.agents.router import ModelRouter
@@ -68,6 +70,7 @@ from strompilot.prices.models import BERLIN, PriceSeries
 from strompilot.prices.service import get_day_ahead_prices
 from strompilot.report.images import ImageClient
 from strompilot.report.monthly import MonthlyReport, art_prompt, build_month
+from strompilot.solar.estimate import estimate_roof
 from strompilot.tariff.defaults import DEFAULTS
 from strompilot.wallbox.client import (
     WallboxClient,
@@ -682,7 +685,7 @@ def _photos_dir() -> Path:
     return Path(__file__).resolve().parent.parent.parent / "data" / "meter_photos"
 
 
-_METER_MIME_EXTENSIONS = {
+_PHOTO_MIME_EXTENSIONS = {
     "image/jpeg": "jpg",
     "image/png": "png",
     "image/webp": "webp",
@@ -706,7 +709,7 @@ def propose_reading(
     """
     household_id = _guard(session, household_id)
     mime = file.content_type or ""
-    extension = _METER_MIME_EXTENSIONS.get(mime)
+    extension = _PHOTO_MIME_EXTENSIONS.get(mime)
     if extension is None:
         raise HTTPException(status_code=422, detail="photo must be an image")
     photo = file.file.read()
@@ -765,7 +768,7 @@ def read_reading_photo(
     mime = next(
         (
             kind
-            for kind, extension in _METER_MIME_EXTENSIONS.items()
+            for kind, extension in _PHOTO_MIME_EXTENSIONS.items()
             if photo.suffix.lower() == f".{extension}"
         ),
         "application/octet-stream",
@@ -1026,6 +1029,183 @@ def make_illustration(
     )
     return IllustrationResponse(
         month=month, illustration_data_url=illustration, cached=cached
+    )
+
+
+ROOF_PROMPT = "roof surface"
+
+_PREVIEW_PROMPTS = {
+    "solar": (
+        "Photorealistic edit: add modern black solar panels covering"
+        " the main roof surface. Keep the house, garden, sky, and photo"
+        " style unchanged."
+    ),
+    "heat_pump": (
+        "Photorealistic edit: add a modern outdoor heat pump unit beside"
+        " the house wall. Keep the house, garden, sky, and photo style"
+        " unchanged."
+    ),
+    "facade": (
+        "Photorealistic edit: show the house with fresh modern insulated"
+        " facade cladding in a warm neutral tone. Keep the roof shape,"
+        " windows, garden, sky, and photo style unchanged."
+    ),
+}
+
+
+def get_sam_client() -> SamClient:
+    """Build the production SAM client for one request."""
+    meta_key = os.environ.get("META_API_KEY", "")
+    if not meta_key:
+        raise HTTPException(status_code=500, detail="model keys missing")
+    return SamClient(meta_key)
+
+
+class RoofBoxOut(BaseModel):
+    """One detected roof box in source pixels."""
+
+    x1: int
+    y1: int
+    x2: int
+    y2: int
+    confidence: float | None
+
+
+class RoofEstimateOut(BaseModel):
+    """One roof's panel fit with its assumptions."""
+
+    roof_share: float
+    roof_m2: float | None
+    usable_m2: float | None
+    panels: int | None
+    kwp: float | None
+    kwh_per_year: float | None
+    assumptions: list[str]
+
+
+class MeasureResponse(BaseModel):
+    """Roof boxes plus the panel estimate, if a roof was found."""
+
+    household_id: str
+    width: int
+    height: int
+    boxes: list[RoofBoxOut]
+    estimate: RoofEstimateOut | None
+    note: str
+
+
+class PreviewResponse(BaseModel):
+    """One renovation preview with its AI label."""
+
+    household_id: str
+    style: str
+    image_data_url: str
+    ai_label: str
+
+
+def _read_photo(file: UploadFile) -> tuple[bytes, str]:
+    """Read and validate one uploaded photo."""
+    mime = file.content_type or ""
+    if mime not in _PHOTO_MIME_EXTENSIONS:
+        raise HTTPException(status_code=422, detail="photo must be an image")
+    photo = file.file.read()
+    if len(photo) > _MAX_PHOTO_BYTES:
+        raise HTTPException(status_code=422, detail="photo exceeds 10 MB")
+    return photo, mime
+
+
+@app.post("/solar/measure", response_model=MeasureResponse)
+def measure_roof(
+    household_id: str,
+    file: UploadFile = File(...),
+    roof_width_m: float | None = Query(default=None, gt=0),
+    lang: Literal["de", "en"] = "de",
+    sam: SamClient = Depends(get_sam_client),
+    session: Session = Depends(current_session),
+) -> MeasureResponse:
+    """Outline the roof in one house photo and estimate the panel fit."""
+    household_id = _guard(session, household_id)
+    photo, mime = _read_photo(file)
+    try:
+        with Image.open(io.BytesIO(photo)) as image:
+            width, height = image.size
+    except UnidentifiedImageError as exc:
+        raise HTTPException(status_code=422, detail="photo unreadable") from exc
+    try:
+        boxes = sam.segment(base64.b64encode(photo).decode("ascii"), mime, ROOF_PROMPT)
+    except LlmError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    english = lang == "en"
+    estimate = estimate_roof(boxes, roof_width_m)
+    if estimate is None:
+        note = (
+            "No roof found in this photo. Try a straight-on daylight shot."
+            if english
+            else "Kein Dach auf diesem Foto gefunden. Versuche eine frontale"
+            " Tageslichtaufnahme."
+        )
+        return MeasureResponse(
+            household_id=household_id,
+            width=width,
+            height=height,
+            boxes=[],
+            estimate=None,
+            note=note,
+        )
+    return MeasureResponse(
+        household_id=household_id,
+        width=width,
+        height=height,
+        boxes=[
+            RoofBoxOut(
+                x1=box.x1,
+                y1=box.y1,
+                x2=box.x2,
+                y2=box.y2,
+                confidence=box.confidence,
+            )
+            for box in boxes
+        ],
+        estimate=RoofEstimateOut(
+            roof_share=estimate.roof_share,
+            roof_m2=estimate.roof_m2,
+            usable_m2=estimate.usable_m2,
+            panels=estimate.panels,
+            kwp=estimate.kwp,
+            kwh_per_year=estimate.kwh_per_year,
+            assumptions=list(estimate.assumptions),
+        ),
+        note="",
+    )
+
+
+@app.post("/solar/preview", response_model=PreviewResponse)
+def preview_renovation(
+    household_id: str,
+    style: Literal["solar", "heat_pump", "facade"],
+    file: UploadFile = File(...),
+    lang: Literal["de", "en"] = "de",
+    images: ImageClient = Depends(get_image_client),
+    session: Session = Depends(current_session),
+) -> PreviewResponse:
+    """Render one renovation style onto the household's own photo."""
+    household_id = _guard(session, household_id)
+    photo, _ = _read_photo(file)
+    try:
+        edited = images.edit(photo, _PREVIEW_PROMPTS[style])
+    except LlmError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    label = (
+        "AI visualization — not a photo of a real installation."
+        if lang == "en"
+        else "KI-Visualisierung – kein Foto einer echten Anlage."
+    )
+    return PreviewResponse(
+        household_id=household_id,
+        style=style,
+        image_data_url="data:image/png;base64,"
+        + base64.b64encode(edited).decode("ascii"),
+        ai_label=label,
     )
 
 

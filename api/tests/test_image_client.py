@@ -1,8 +1,10 @@
 """Tests for the Muse Image client."""
 
 import base64
+import io
 
 import pytest
+from PIL import Image
 
 from strompilot.llm.types import LlmError
 from strompilot.report.images import IMAGE_MODEL, ImageClient
@@ -46,6 +48,47 @@ def test_generate_posts_shape_and_decodes_bytes(
 def test_generate_rejects_blank_prompt() -> None:
     with pytest.raises(LlmError, match="prompt"):
         ImageClient("k").generate("  ")
+
+
+def test_edit_posts_image_and_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self) -> dict[str, object]:
+            return {"data": [{"b64_json": base64.b64encode(b"png-bytes").decode()}]}
+
+    def fake_post(
+        url: str,
+        headers: dict[str, str],
+        files: dict[str, object],
+        data: dict[str, str],
+        timeout: float,
+    ) -> FakeResponse:
+        captured["url"] = url
+        captured["files"] = files
+        captured["data"] = data
+        assert headers["Authorization"].endswith("test-key")
+        assert timeout >= 60
+        return FakeResponse()
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    client = ImageClient("test-key")
+    buffer = io.BytesIO()
+    Image.new("RGB", (8, 8), (1, 2, 3)).save(buffer, format="PNG")
+    assert client.edit(buffer.getvalue(), "add solar panels") == b"png-bytes"
+    assert captured["url"] == "https://api.meta.ai/v1/images/edits"
+    assert isinstance(captured["files"], dict)
+    assert "image" in captured["files"]
+    fields = captured["data"]
+    assert isinstance(fields, dict)
+    assert fields["model"] == "muse-image-1.0"
+    assert fields["prompt"] == "add solar panels"
 
 
 def test_http_error_raises_llm_error(monkeypatch: pytest.MonkeyPatch) -> None:

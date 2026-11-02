@@ -113,6 +113,59 @@ def test_status_updates_stick(tmp_path: Path) -> None:
     assert (updated.status, updated.channel) == ("delivered", "log")
 
 
+def test_delivery_receipt_records_time_and_error(tmp_path: Path) -> None:
+    store = AlertStore(tmp_path / "alerts.db")
+    alert = store.record(
+        household_id="hh1",
+        dedup_key="k1",
+        kind="cheap_window",
+        title="t",
+        body="b",
+        status="held",
+        channel=None,
+        reason="quiet",
+    )
+    assert alert is not None
+    store.set_status(alert.id, "failed", None, error="webhook: timeout")
+    (failed,) = store.list_alerts("hh1")
+    assert failed.status == "failed"
+    assert failed.delivered_at is not None
+    assert failed.last_error == "webhook: timeout"
+    store.set_status(alert.id, "delivered", "log")
+    (delivered,) = store.list_alerts("hh1")
+    assert delivered.delivered_at is not None
+    assert delivered.last_error is None
+
+
+def test_receipt_columns_migrate_old_tables(tmp_path: Path) -> None:
+    import sqlite3
+
+    db = tmp_path / "alerts.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "CREATE TABLE alerts (id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            " household_id TEXT NOT NULL, dedup_key TEXT NOT NULL UNIQUE,"
+            " kind TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL,"
+            " status TEXT NOT NULL, channel TEXT, reason TEXT NOT NULL,"
+            " created_at TEXT NOT NULL)"
+        )
+    store = AlertStore(db)
+    alert = store.record(
+        household_id="hh1",
+        dedup_key="k1",
+        kind="cheap_window",
+        title="t",
+        body="b",
+        status="held",
+        channel=None,
+        reason="quiet",
+    )
+    assert alert is not None
+    store.set_status(alert.id, "delivered", "log")
+    (updated,) = store.list_alerts("hh1")
+    assert updated.delivered_at is not None
+
+
 def test_held_lists_only_held(tmp_path: Path) -> None:
     store = AlertStore(tmp_path / "alerts.db")
     for key, status in [("k1", "held"), ("k2", "delivered"), ("k3", "held")]:

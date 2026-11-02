@@ -38,6 +38,8 @@ class Alert(BaseModel):
     channel: str | None
     reason: str
     created_at: datetime
+    delivered_at: datetime | None = None
+    last_error: str | None = None
 
 
 class WatchReport(BaseModel):

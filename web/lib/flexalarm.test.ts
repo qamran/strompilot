@@ -33,10 +33,37 @@ describe("flexalarm mirrors", () => {
           channel: "log",
           reason: "gut",
           created_at: "2026-06-01T12:00:00+00:00",
+          delivered_at: "2026-06-01T12:01:00+00:00",
+          last_error: null,
         },
       ],
     };
     expect(parseAlertsResponse(payload)).toEqual(payload);
+  });
+
+  it("parses a failed delivery receipt", () => {
+    const payload = {
+      household_id: "h1",
+      alerts: [
+        {
+          id: 2,
+          household_id: "h1",
+          dedup_key: "h1:2026-06-01:spike:18:00-19:00",
+          kind: "spike",
+          title: "Teuer",
+          body: "Abends.",
+          status: "failed",
+          channel: null,
+          reason: "gut",
+          created_at: "2026-06-01T12:00:00+00:00",
+          delivered_at: "2026-06-01T12:01:00+00:00",
+          last_error: "webhook: timeout",
+        },
+      ],
+    };
+    const [alert] = parseAlertsResponse(payload).alerts;
+    expect(alert.last_error).toBe("webhook: timeout");
+    expect(alert.delivered_at).toBe("2026-06-01T12:01:00+00:00");
   });
 
   it("rejects malformed payloads", () => {

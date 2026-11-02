@@ -29,6 +29,15 @@ exists so judges and auditors can verify our Meta tooling use in one place.
   fixtures showed it was the only phrase that boxed the LCD, at
   confidence around 0.7-0.8. The crop goes to Spark for digit reading;
   on zero matches or SAM errors the full photo is read instead.
+- SP-14 pins the prompt `roof surface`: a live shootout on a 1920x1280
+  house photo scored `roof` (7 boxes), `roof surface` (5 boxes), and
+  `house roof` (7 boxes). All three found the same main roof, so
+  `roof surface` wins with the least noise, and the largest box wins
+  the estimate.
+- SP-14 proves `/images/edits` live: the style prompt plus the
+  household photo returns an edited preview. The declared MIME type
+  must match the real bytes (Meta returns webp), so the client sniffs
+  with PIL. Every preview ships an AI-visualization label.
 
 ## Possible later, not in the plan
 

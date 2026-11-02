@@ -77,6 +77,19 @@ export default function AlarmsPage() {
           <p className="muted">
             {alert.status} · {alert.reason} · {alert.created_at}
           </p>
+          {alert.status === "delivered" && alert.channel && (
+            <p className="muted">
+              {t.deliveredVia} {alert.channel}
+              {alert.delivered_at &&
+                ` · ${new Date(alert.delivered_at).toLocaleString()}`}
+            </p>
+          )}
+          {alert.status === "failed" && (
+            <p className="error">
+              {t.deliveryFailed}
+              {alert.last_error && `: ${alert.last_error}`}
+            </p>
+          )}
         </article>
       ))}
     </section>

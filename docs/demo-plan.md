@@ -20,6 +20,7 @@ Berlin household, live day-ahead prices.
    - http://127.0.0.1:3100/about
    - http://127.0.0.1:3100/household
    - http://127.0.0.1:3100/account
+   - http://127.0.0.1:3100/solar (teaser: roof measure plus preview)
 6. Keep the seed script ready, not run: `scripts/seed_demo.py` rebuilds
    the showcase case in about two minutes if the database is ever
    wiped mid-demo. It signs in as the demo email by itself.

@@ -115,7 +115,7 @@ def run_once(
         fired += 1
         channel, error = _deliver(stored, active)
         if channel is None:
-            alerts.set_status(stored.id, "failed", None)
+            alerts.set_status(stored.id, "failed", None, error=error)
             errors.append(f"{key}: {error}")
         else:
             alerts.set_status(stored.id, "delivered", channel)
@@ -147,9 +147,9 @@ def release_due(
         return {"delivered": 0, "failed": 0}
     delivered = failed = 0
     for alert in alerts.held(household_id):
-        channel, _ = _deliver(alert, senders)
+        channel, error = _deliver(alert, senders)
         if channel is None:
-            alerts.set_status(alert.id, "failed", None)
+            alerts.set_status(alert.id, "failed", None, error=error)
             failed += 1
         else:
             alerts.set_status(alert.id, "delivered", channel)

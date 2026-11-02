@@ -21,7 +21,9 @@ CREATE TABLE IF NOT EXISTS alerts (
     status TEXT NOT NULL,
     channel TEXT,
     reason TEXT NOT NULL,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    delivered_at TEXT,
+    last_error TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_alerts_household
     ON alerts (household_id, id DESC);
@@ -53,6 +55,11 @@ class AlertStore:
         path.parent.mkdir(parents=True, exist_ok=True)
         with sqlite3.connect(path) as conn:
             conn.executescript(_SCHEMA)
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(alerts)")}
+            if "delivered_at" not in columns:
+                conn.execute("ALTER TABLE alerts ADD COLUMN delivered_at TEXT")
+            if "last_error" not in columns:
+                conn.execute("ALTER TABLE alerts ADD COLUMN last_error TEXT")
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -128,7 +135,8 @@ class AlertStore:
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT id, household_id, dedup_key, kind, title, body,"
-                " status, channel, reason, created_at FROM alerts"
+                " status, channel, reason, created_at, delivered_at,"
+                " last_error FROM alerts"
                 " WHERE household_id = ? ORDER BY id ASC LIMIT ?",
                 (household_id, limit),
             ).fetchall()
@@ -140,18 +148,29 @@ class AlertStore:
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT id, household_id, dedup_key, kind, title, body,"
-                " status, channel, reason, created_at FROM alerts"
+                " status, channel, reason, created_at, delivered_at,"
+                " last_error FROM alerts"
                 " WHERE household_id = ? AND status = 'held' ORDER BY id ASC",
                 (household_id,),
             ).fetchall()
         return [self._to_alert(row) for row in rows]
 
-    def set_status(self, alert_id: int, status: str, channel: str | None) -> None:
-        """Move one alert to a new delivery state."""
+    def set_status(
+        self,
+        alert_id: int,
+        status: str,
+        channel: str | None,
+        error: str | None = None,
+    ) -> None:
+        """Move one alert to a new delivery state with its receipt."""
+        stamp = (
+            datetime.now(UTC).isoformat() if status in ("delivered", "failed") else None
+        )
         with self._connect() as conn:
             conn.execute(
-                "UPDATE alerts SET status = ?, channel = ? WHERE id = ?",
-                (status, channel, alert_id),
+                "UPDATE alerts SET status = ?, channel = ?,"
+                " delivered_at = ?, last_error = ? WHERE id = ?",
+                (status, channel, stamp, error, alert_id),
             )
 
     def has_data(self, household_id: str) -> bool:
@@ -177,10 +196,12 @@ class AlertStore:
         with self._connect() as conn:
             count = conn.execute(
                 "INSERT OR IGNORE INTO alerts (household_id, dedup_key, kind,"
-                " title, body, status, channel, reason, created_at)"
+                " title, body, status, channel, reason, created_at,"
+                " delivered_at, last_error)"
                 " SELECT ?, CASE WHEN SUBSTR(dedup_key, 1, ?) = ?"
                 " THEN ? || SUBSTR(dedup_key, ?) ELSE dedup_key END,"
-                " kind, title, body, status, channel, reason, created_at"
+                " kind, title, body, status, channel, reason, created_at,"
+                " delivered_at, last_error"
                 " FROM alerts WHERE household_id = ? ORDER BY id",
                 (target, len(prefix), prefix, scoped, len(prefix) + 1, source),
             ).rowcount
@@ -200,6 +221,8 @@ class AlertStore:
             channel,
             reason,
             stamp,
+            delivered,
+            last_error,
         ) = row
         assert isinstance(id_value, int)
         assert isinstance(household, str)
@@ -211,6 +234,8 @@ class AlertStore:
         assert channel is None or isinstance(channel, str)
         assert isinstance(reason, str)
         assert isinstance(stamp, str)
+        assert delivered is None or isinstance(delivered, str)
+        assert last_error is None or isinstance(last_error, str)
         return Alert(
             id=id_value,
             household_id=household,
@@ -222,4 +247,6 @@ class AlertStore:
             channel=channel,
             reason=reason,
             created_at=datetime.fromisoformat(stamp),
+            delivered_at=(datetime.fromisoformat(delivered) if delivered else None),
+            last_error=last_error,
         )
