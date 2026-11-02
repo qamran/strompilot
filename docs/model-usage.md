@@ -12,9 +12,9 @@ exists so judges and auditors can verify our Meta tooling use in one place.
 | Muse Spark Open | Baseten inference | SP-05 narration; SP-03 re-ranking; SP-08 triage; SP-13 eval judges (judge worker, 1200 tokens, effort low, temp 0.0) | High-volume jobs | Many calls per plan | Per-call fallback to Muse Spark |
 | Muse Wonder | Meta Model API | SP-04 critic | Final quality gate on every plan | One review per plan | Muse Spark acts as critic |
 | SAM 3.1 | Meta Model API | SP-09 meter intake | Segment the meter display via text prompts before digit reading | One call per photo | Read the full photo without a mask |
-| SAM 3.1 | Meta Model API | SP-14 solar teaser (optional) | Outline usable roof area for the panel-fit estimate | One call per roof photo | Skip the estimate, keep the teaser text |
+| SAM 3.1 | Meta Model API | SP-14 solar teaser | Outline usable roof area for the panel-fit estimate | One call per roof photo | Fail loudly (502); the view shows the error |
 | Muse Image | Meta Model API | SP-12 monthly report | Personalized report illustration | One image per household per month | Ship the report without illustration |
-| Muse Image | Meta Model API | SP-14 renovation teaser (optional) | Renovation previews on the household's own photo, labeled as AI visuals | One preview per request | Show the original photo with a notice |
+| Muse Image | Meta Model API | SP-14 renovation teaser | Renovation previews on the household's own photo, labeled as AI visuals | One preview per request | Fail loudly (502); the view shows the error |
 
 ## SAM 3.1 notes
 
