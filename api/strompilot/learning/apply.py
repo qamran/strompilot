@@ -66,9 +66,14 @@ def apply_learned_windows(
             earliest,
             latest,
         )
+        if start == end:
+            devices.append(device)
+            continue
         devices.append(
             device.model_copy(
                 update={"earliest": _to_clock(start), "latest": _to_clock(end)}
             )
         )
-    return HouseholdConstraints(devices=devices, notes=constraints.notes)
+    return HouseholdConstraints(
+        devices=devices, notes=constraints.notes, unmatched=constraints.unmatched
+    )

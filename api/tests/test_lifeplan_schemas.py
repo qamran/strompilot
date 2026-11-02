@@ -62,6 +62,19 @@ def test_device_constraint_rejects_bad_shapes() -> None:
             DeviceConstraint.model_validate({**base, key: value})
 
 
+def test_device_constraint_rejects_zero_width_window() -> None:
+    """Soak edge-03: earliest == latest can never fit a run."""
+    with pytest.raises(ValidationError, match="zero-width"):
+        DeviceConstraint(
+            device="E-Auto",
+            power_kw=11.0,
+            duration_h=4.0,
+            earliest="07:00",
+            latest="07:00",
+            shiftable=False,
+        )
+
+
 def test_household_constraints_round_trip_json() -> None:
     constraints = HouseholdConstraints(
         devices=[
@@ -77,6 +90,16 @@ def test_household_constraints_round_trip_json() -> None:
     )
     clone = HouseholdConstraints.model_validate_json(constraints.model_dump_json())
     assert clone == constraints
+
+
+def test_household_constraints_defaults_unmatched_empty() -> None:
+    """Soak unknown-02: dropped asks must have a structured channel."""
+    constraints = HouseholdConstraints.model_validate({"devices": [], "notes": ""})
+    assert constraints.unmatched == []
+    filled = HouseholdConstraints.model_validate(
+        {"devices": [], "notes": "", "unmatched": ["Sauna: unknown device"]}
+    )
+    assert filled.unmatched == ["Sauna: unknown device"]
 
 
 def test_price_bar_accepts_hourly_bar() -> None:

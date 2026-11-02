@@ -95,9 +95,24 @@ def test_apply_ignores_malformed_entries() -> None:
 def test_apply_clamps_to_the_day() -> None:
     constraints = HouseholdConstraints(devices=[make_device()])
     applied = apply_learned_windows(
+        constraints, {"Waschmaschine": {"earliest_shift_h": 20, "latest_shift_h": 0}}
+    )
+    assert (applied.devices[0].earliest, applied.devices[0].latest) == (
+        "20:00",
+        "23:00",
+    )
+
+
+def test_apply_keeps_window_when_shift_collapses_it() -> None:
+    """A shift that collapses to zero width is ignored like bad prefs."""
+    constraints = HouseholdConstraints(devices=[make_device()])
+    applied = apply_learned_windows(
         constraints, {"Waschmaschine": {"earliest_shift_h": 30, "latest_shift_h": 0}}
     )
-    assert applied.devices[0].earliest == "23:00"
+    assert (applied.devices[0].earliest, applied.devices[0].latest) == (
+        "00:00",
+        "23:00",
+    )
 
 
 def test_apply_wraps_overnight_starts_past_midnight() -> None:

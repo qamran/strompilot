@@ -17,6 +17,16 @@ NARRATE_TOKENS = 1500
 _TIME_RE = re.compile(r"\b([01]?\d|2[0-3]):([0-5]\d)\b")
 _MONEY_RE = re.compile(r"(\d+[.,]\d{2})\s*(€|Euro|euro|EUR|ct|Cent|cent)(?!\w)")
 _FOLD = str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss"})
+_DEVICE_ALIASES = {
+    "waschmaschine": ["washing machine", "washer"],
+    "geschirrspueler": ["dishwasher", "dish washer"],
+    "trockner": ["dryer", "tumble dryer"],
+    "e-auto": ["electric car", "e-car", "ev"],
+    "eauto": ["electric car", "e-car", "ev"],
+    "waermepumpe": ["heat pump"],
+    "herd": ["stove", "cooker", "oven"],
+    "gefrierschrank": ["freezer"],
+}
 _EURO_UNITS = {"€", "Euro", "euro", "EUR"}
 _EURO_TOLERANCE = 0.06
 _CT_TOLERANCE = 0.6
@@ -30,6 +40,9 @@ Rules:
 in Euro with 2 decimals.
 - State the total cost in Euro with 2 decimals.
 - Mention unscheduled devices when listed, with one short reason each.
+- State in words why each device runs at its time (cheapest hours or
+fixed household time from the bullet reason); never invent new numbers
+for the reason.
 - Add no times, prices, costs, or devices beyond the bullets.
 - Reply in German, plain words, no markdown headers.""",
     "en": """You are Strompilot, a friendly energy advisor for
@@ -40,6 +53,9 @@ Rules:
 in Euro with 2 decimals.
 - State the total cost in Euro with 2 decimals.
 - Mention unscheduled devices when listed, with one short reason each.
+- State in words why each device runs at its time (cheapest hours or
+fixed household time from the bullet reason); never invent new numbers
+for the reason.
 - Add no times, prices, costs, or devices beyond the bullets.
 - Reply in English, plain words, no markdown headers.""",
 }
@@ -86,7 +102,8 @@ def _brief(
             f"- {slot.device}: {slot.start} to {slot.end}, "
             f"{_euro(slot.energy_kwh, lang)} kWh, "
             f"average {_euro(slot.price_ct_kwh, lang)} ct/kWh, "
-            f"cost {_euro(slot.cost_eur, lang)} Euro."
+            f"cost {_euro(slot.cost_eur, lang)} Euro. "
+            f"Reason: {slot.reason}."
             for slot in slots
         ]
         lines.append(f"Total cost: {_euro(total_cost_eur, lang)} Euro.")
@@ -97,6 +114,7 @@ def _brief(
         f"- {slot.device}: {slot.start} bis {slot.end}, "
         f"{_euro(slot.energy_kwh, lang)} kWh, "
         f"Durchschnitt {_euro(slot.price_ct_kwh, lang)} ct/kWh, "
+        f"Grund: {slot.reason}. "
         f"Kosten {_euro(slot.cost_eur, lang)} Euro."
         for slot in slots
     ]
@@ -181,7 +199,10 @@ def _to_minutes(hours: str, minutes: str) -> int:
 
 
 def check_faithfulness(
-    text: str, slots: list[ScheduledSlot], total_cost_eur: float
+    text: str,
+    slots: list[ScheduledSlot],
+    total_cost_eur: float,
+    lang: str = "de",
 ) -> list[str]:
     """List every time, amount, or device the plan does not back."""
     violations: list[str] = []
@@ -204,8 +225,13 @@ def check_faithfulness(
             violations.append(f"Betrag {match.group(0)} ohne Planbeleg")
     folded = text.lower().translate(_FOLD)
     for slot in slots:
-        if slot.device.lower().translate(_FOLD) not in folded:
-            violations.append(f"Gerät {slot.device} fehlt im Text")
+        name = slot.device.lower().translate(_FOLD)
+        if name in folded:
+            continue
+        aliases = _DEVICE_ALIASES.get(name, []) if lang == "en" else []
+        if any(re.search(rf"\b{re.escape(alias)}\b", folded) for alias in aliases):
+            continue
+        violations.append(f"Gerät {slot.device} fehlt im Text")
     return violations
 
 
@@ -229,7 +255,7 @@ def narrate(
         Message(role="user", content=brief),
     ]
     result = router.chat("explainer", messages, NARRATE_TOKENS, LOW_EFFORT)
-    violations = check_faithfulness(result.content, slots, total_cost_eur)
+    violations = check_faithfulness(result.content, slots, total_cost_eur, lang)
     if violations:
         repair = router.chat(
             "explainer",
@@ -246,7 +272,7 @@ def narrate(
             LOW_EFFORT,
         )
         result = repair
-        violations = check_faithfulness(result.content, slots, total_cost_eur)
+        violations = check_faithfulness(result.content, slots, total_cost_eur, lang)
     citations = build_citations(
         slots, total_cost_eur, constraints, unscheduled, price_source, lang
     )

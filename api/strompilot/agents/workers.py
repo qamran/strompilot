@@ -155,7 +155,7 @@ def scheduler_node(
     ]
     return PlanState(
         schedule=schedule,
-        unscheduled=plan.unscheduled,
+        unscheduled=[*plan.unscheduled, *constraints.unmatched],
         total_cost_eur=plan.total_cost_eur,
         prices=prices,
         price_source=loaded.source,

@@ -50,6 +50,19 @@ def test_narrate_returns_cited_text() -> None:
     assert len(narration.citations) >= 3
 
 
+def test_narrate_brief_carries_slot_reasons() -> None:
+    """Eval nar-05: the narrator must see why each slot runs then."""
+    router = FakeRouter({"explainer": [reply(CLEAN, SPARK_OPEN_MODEL)]})
+    narrate([SLOT], 0.60, CONSTRAINTS, [], "awattar-live", router)
+    assert SLOT.reason in router.prompts[0]
+
+
+def test_narrate_prompt_demands_reasons_in_words() -> None:
+    router = FakeRouter({"explainer": [reply(CLEAN, SPARK_OPEN_MODEL)]})
+    narrate([SLOT], 0.60, CONSTRAINTS, [], "awattar-live", router)
+    assert "why each device runs" in router.prompts[0]
+
+
 def test_narrate_speaks_english_when_asked() -> None:
     clean = (
         "The Waschmaschine runs from 02:00 to 04:00 and costs 0.60 Euro. "
@@ -106,6 +119,21 @@ def test_check_faithfulness_folds_umlauts() -> None:
     )
     text = "Der Geschirrspüler läuft von 02:00 bis 04:00 Uhr."
     assert check_faithfulness(text, [slot], 0.45) == []
+
+
+def test_check_faithfulness_accepts_english_alias() -> None:
+    """Soak imposs-01: 'washing machine' backs Waschmaschine in en mode."""
+    text = (
+        "The washing machine runs from 02:00 to 04:00 and costs 0.60 Euro. "
+        "The total cost is 0.60 Euro."
+    )
+    assert check_faithfulness(text, [SLOT], 0.60, lang="en") == []
+
+
+def test_check_faithfulness_stays_strict_in_german() -> None:
+    text = "The washing machine runs from 02:00 to 04:00, total 0.60 Euro."
+    violations = check_faithfulness(text, [SLOT], 0.60)
+    assert any("Waschmaschine" in violation for violation in violations)
 
 
 def test_narrate_retries_once_on_violations() -> None:

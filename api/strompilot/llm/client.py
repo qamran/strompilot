@@ -15,8 +15,8 @@ TIMEOUT_SECONDS = 60.0
 BODY_RETRIES = 1
 
 
-class _Truncated(LlmError):
-    """Internal signal: the model hit the length limit before answering."""
+class Truncated(LlmError):
+    """The model hit the length limit before answering, even after retries."""
 
 
 class ChatClient:
@@ -73,7 +73,7 @@ class ChatClient:
                 f"finish={finish} completion={output_tokens} reasoning={reasoning}"
             )
             if finish == "length":
-                raise _Truncated(f"truncated at {budget} tokens ({summary})")
+                raise Truncated(f"truncated at {budget} tokens ({summary})")
             raise LlmError(f"unreadable response body ({summary})")
         return ChatResult(
             content=content,
@@ -121,7 +121,7 @@ class ChatClient:
                 raise LlmError(f"HTTP {response.status_code} from {self._base_url}")
             try:
                 return self._parse_body(response, budget)
-            except _Truncated:
+            except Truncated:
                 attempts -= 1
                 if attempts <= 0:
                     raise

@@ -136,6 +136,18 @@ def test_scheduler_marks_unfittable_devices() -> None:
     assert "Waschmaschine" in update["unscheduled"][0]
 
 
+def test_scheduler_carries_unmatched_into_unscheduled() -> None:
+    """Soak unknown-02: dropped asks surface as named gaps."""
+    constraints = HouseholdConstraints(
+        devices=[], unmatched=["Sauna: unknown device, no power profile"]
+    ).model_dump()
+    update = scheduler_node(
+        PlanState(request="plane", constraints=constraints), stub_loader
+    )
+    assert update["schedule"] == []
+    assert update["unscheduled"] == ["Sauna: unknown device, no power profile"]
+
+
 def test_explainer_writes_narration() -> None:
     router = FakeRouter({"explainer": [reply("Wasche nachts.", SPARK_OPEN_MODEL)]})
     update = explainer_node(PlanState(request="plane"), router)

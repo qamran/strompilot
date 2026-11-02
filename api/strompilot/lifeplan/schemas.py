@@ -1,6 +1,6 @@
 """Life-to-plan schemas: constraints, prices, slots, citations."""
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 _TIME_RE = r"^([01]\d|2[0-3]):([0-5]\d)$"
 _DEVICE_RE = r"^[A-Za-z0-9][A-Za-z0-9\-]*$"
@@ -25,12 +25,21 @@ class DeviceConstraint(BaseModel):
     latest: str = Field(pattern=_TIME_RE)
     shiftable: bool = True
 
+    @model_validator(mode="after")
+    def _reject_zero_width_window(self) -> "DeviceConstraint":
+        if self.earliest == self.latest:
+            raise ValueError(
+                "zero-width window cannot fit a run: widen earliest/latest"
+            )
+        return self
+
 
 class HouseholdConstraints(BaseModel):
     """Editable household constraints: the extraction output."""
 
     devices: list[DeviceConstraint] = []
     notes: str = ""
+    unmatched: list[str] = []
 
 
 class PriceBar(BaseModel):
