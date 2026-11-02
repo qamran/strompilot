@@ -4,8 +4,11 @@
 
 import { useEffect, useState } from "react";
 import { fetchAlerts, fetchHistory, fetchPrices } from "../../lib/api";
+import type { Alert } from "../../lib/flexalarm";
+import type { EpisodesList } from "../../lib/memory";
 import { formatCt } from "../../lib/format";
 import { useLang } from "../../lib/i18n";
+import { useSession } from "../../lib/session";
 
 interface LiveStats {
   cheapest: string | null;
@@ -23,6 +26,7 @@ const MODELS: { name: string; roleKey: "roleSpark" | "roleOpen" | "roleWonder" |
 
 export default function AboutPage() {
   const { t, lang } = useLang();
+  const { me, loading } = useSession();
   const [stats, setStats] = useState<LiveStats>({
     cheapest: null,
     alerts: null,
@@ -32,10 +36,15 @@ export default function AboutPage() {
   useEffect(() => {
     let live = true;
     async function load() {
+      const wantHousehold = !loading && me !== null;
       const [prices, alerts, history] = await Promise.allSettled([
         fetchPrices(),
-        fetchAlerts(),
-        fetchHistory(),
+        wantHousehold
+          ? fetchAlerts()
+          : Promise.resolve([] as Alert[]),
+        wantHousehold
+          ? fetchHistory()
+          : Promise.resolve({ household_id: "", episodes: [] } as EpisodesList),
       ]);
       if (!live) return;
       let cheapest: string | null = null;
@@ -45,19 +54,22 @@ export default function AboutPage() {
         );
         cheapest = `${low.start.slice(11, 13)}:00 · ${formatCt(low.eur_per_mwh / 10, lang)}/kWh`;
       }
+      const signedIn = !loading && me !== null;
       setStats({
         cheapest,
         alerts:
-          alerts.status === "fulfilled" ? alerts.value.length : null,
+          signedIn && alerts.status === "fulfilled" ? alerts.value.length : null,
         feedback:
-          history.status === "fulfilled" ? history.value.episodes.length : null,
+          signedIn && history.status === "fulfilled"
+            ? history.value.episodes.length
+            : null,
       });
     }
     load().catch(() => {});
     return () => {
       live = false;
     };
-  }, [lang]);
+  }, [lang, loading, me]);
   const steps = [
     { title: t.step1Title, body: t.step1Body },
     { title: t.step2Title, body: t.step2Body },

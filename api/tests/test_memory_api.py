@@ -7,12 +7,15 @@ from fastapi.testclient import TestClient
 
 from strompilot.main import app
 
+from .auth_helpers import sign_in
+
 
 def test_preference_crud_round_trip(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("MEMORY_DB", str(tmp_path / "memory.db"))
     client = TestClient(app)
+    sign_in(client, "h1")
     put = client.put(
         "/memory/preferences/quiet_hours?household_id=h1",
         json={"value": {"start": "22:00"}},
@@ -33,6 +36,7 @@ def test_history_add_list_and_filter(
 ) -> None:
     monkeypatch.setenv("MEMORY_DB", str(tmp_path / "memory.db"))
     client = TestClient(app)
+    sign_in(client, "h1")
     first = client.post(
         "/memory/history?household_id=h1",
         json={"kind": "plan", "text": "erster Plan"},
@@ -57,17 +61,24 @@ def test_households_stay_isolated(
 ) -> None:
     monkeypatch.setenv("MEMORY_DB", str(tmp_path / "memory.db"))
     client = TestClient(app)
+    sign_in(client, "h1")
+    other = TestClient(app)
+    sign_in(other, "h2")
     client.put("/memory/preferences/k?household_id=h1", json={"value": "a"})
     created = client.post(
         "/memory/history?household_id=h1",
         json={"kind": "note", "text": "privat"},
     )
     episode_id = created.json()["id"]
-    assert client.get("/memory/preferences?household_id=h2").json()["preferences"] == {}
-    assert client.get("/memory/history?household_id=h2").json()["episodes"] == []
+    assert other.get("/memory/preferences?household_id=h2").json()["preferences"] == {}
+    assert other.get("/memory/history?household_id=h2").json()["episodes"] == []
+    assert client.get("/memory/preferences?household_id=h2").status_code == 403
+    assert (
+        other.delete(f"/memory/history/{episode_id}?household_id=h2").status_code == 404
+    )
     assert (
         client.delete(f"/memory/history/{episode_id}?household_id=h2").status_code
-        == 404
+        == 403
     )
     assert (
         client.delete(f"/memory/history/{episode_id}?household_id=h1").status_code
@@ -80,17 +91,20 @@ def test_forget_household_wipes_everything(
 ) -> None:
     monkeypatch.setenv("MEMORY_DB", str(tmp_path / "memory.db"))
     client = TestClient(app)
+    sign_in(client, "h1")
+    other = TestClient(app)
+    sign_in(other, "h2")
     client.put("/memory/preferences/k?household_id=h1", json={"value": "a"})
     client.post(
         "/memory/history?household_id=h1",
         json={"kind": "note", "text": "vergiss mich"},
     )
-    client.put("/memory/preferences/k?household_id=h2", json={"value": "b"})
+    other.put("/memory/preferences/k?household_id=h2", json={"value": "b"})
     forgotten = client.delete("/memory/household?household_id=h1")
     assert forgotten.status_code == 200
     assert client.get("/memory/preferences?household_id=h1").json()["preferences"] == {}
     assert client.get("/memory/history?household_id=h1").json()["episodes"] == []
-    assert client.get("/memory/preferences?household_id=h2").json()["preferences"] == {
+    assert other.get("/memory/preferences?household_id=h2").json()["preferences"] == {
         "k": "b"
     }
 
@@ -100,6 +114,7 @@ def test_blank_household_rejected(
 ) -> None:
     monkeypatch.setenv("MEMORY_DB", str(tmp_path / "memory.db"))
     client = TestClient(app)
+    sign_in(client, "h1")
     response = client.get("/memory/preferences?household_id=%20%20")
     assert response.status_code == 422
     created = client.post(
@@ -112,6 +127,7 @@ def test_blank_household_rejected(
 def test_blank_bodies_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MEMORY_DB", str(tmp_path / "memory.db"))
     client = TestClient(app)
+    sign_in(client, "h1")
     blank_text = client.post(
         "/memory/history?household_id=h1",
         json={"kind": "note", "text": "   "},

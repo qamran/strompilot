@@ -13,12 +13,14 @@ import {
 import type { DayAheadPriceSeries } from "../lib/prices";
 import type { WallboxStatus } from "../lib/wallbox";
 import { useLang } from "../lib/i18n";
+import { useSession } from "../lib/session";
 import { formatCt, priceClass } from "../lib/format";
 import Heatmap from "../components/Heatmap";
 import Odometer from "../components/Odometer";
 import SourceChip from "../components/SourceChip";
 import GlassBox from "../components/GlassBox";
 import ConsentGate from "../components/ConsentGate";
+import SignInPrompt from "../components/SignInPrompt";
 
 function currentMonth(): string {
   const now = new Date();
@@ -35,6 +37,7 @@ function currentPoint(series: DayAheadPriceSeries): number {
 
 export default function PricesPage() {
   const { t, lang } = useLang();
+  const { me, loading } = useSession();
   const router = useRouter();
   const [series, setSeries] = useState<DayAheadPriceSeries | null>(null);
   const [savings, setSavings] = useState(0);
@@ -49,13 +52,16 @@ export default function PricesPage() {
       .catch((err: unknown) =>
         setError(err instanceof Error ? err.message : String(err)),
       );
-    fetchMonthlyReport(currentMonth(), lang)
-      .then((res) => setSavings(res.report.savings_eur))
-      .catch(() => setSavings(0));
     fetchWallbox()
       .then(setWallbox)
       .catch(() => setWallbox(null));
   }, [lang]);
+  useEffect(() => {
+    if (loading || !me) return;
+    fetchMonthlyReport(currentMonth(), lang)
+      .then((res) => setSavings(res.report.savings_eur))
+      .catch(() => setSavings(0));
+  }, [lang, loading, me]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -118,25 +124,29 @@ export default function PricesPage() {
 
       <section className="panel">
         <p className="muted">{t.tagline}</p>
-        <ConsentGate
-          text={t.consentPlan}
-          storageKey="plan"
-          onChange={setConsented}
-        >
-          {() => (
-            <form className="plan-form" onSubmit={submit}>
-              <input
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-                placeholder={t.planPlaceholder}
-                aria-label={t.planButton}
-              />
-              <button type="submit" disabled={!consented}>
-                {t.planButton}
-              </button>
-            </form>
-          )}
-        </ConsentGate>
+        {!loading && !me ? (
+          <SignInPrompt />
+        ) : (
+          <ConsentGate
+            text={t.consentPlan}
+            storageKey="plan"
+            onChange={setConsented}
+          >
+            {() => (
+              <form className="plan-form" onSubmit={submit}>
+                <input
+                  value={text}
+                  onChange={(e) => setText(e.target.value)}
+                  placeholder={t.planPlaceholder}
+                  aria-label={t.planButton}
+                />
+                <button type="submit" disabled={!consented}>
+                  {t.planButton}
+                </button>
+              </form>
+            )}
+          </ConsentGate>
+        )}
         <p className="muted">{t.planHint}</p>
         {error && <p className="error">{error}</p>}
       </section>

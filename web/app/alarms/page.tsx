@@ -6,21 +6,25 @@ import { useEffect, useState } from "react";
 import { fetchAlerts, triggerWatch } from "../../lib/api";
 import type { Alert, WatchReport } from "../../lib/flexalarm";
 import { useLang } from "../../lib/i18n";
+import { useSession } from "../../lib/session";
+import SignInPrompt from "../../components/SignInPrompt";
 
 export default function AlarmsPage() {
   const { t, lang } = useLang();
+  const { me, loading } = useSession();
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [report, setReport] = useState<WatchReport | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
+    if (loading || !me) return;
     fetchAlerts()
       .then(setAlerts)
       .catch((err: unknown) =>
         setError(err instanceof Error ? err.message : String(err)),
       );
-  }, []);
+  }, [loading, me]);
 
   async function reload() {
     try {
@@ -40,6 +44,10 @@ export default function AlarmsPage() {
     } finally {
       setBusy(false);
     }
+  }
+
+  if (!loading && !me) {
+    return <SignInPrompt />;
   }
 
   return (

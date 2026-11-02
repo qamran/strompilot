@@ -9,6 +9,8 @@ from fastapi.testclient import TestClient
 
 from strompilot.main import app, get_image_client
 
+from .auth_helpers import sign_in
+
 
 class FakeImages:
     """Scripted image generator that records prompts."""
@@ -43,7 +45,9 @@ def report_setup(
         day = date(2026, 2, day_number)
         cache.write(day, day_series([25.0] * 24, day), "test", datetime.now(UTC))
     app.dependency_overrides[get_image_client] = lambda: FakeImages(b"art-bytes")
-    yield TestClient(app)
+    client = TestClient(app)
+    sign_in(client, "h1")
+    yield client
     app.dependency_overrides.clear()
 
 
@@ -116,5 +120,6 @@ def test_missing_keys_returns_500(
     monkeypatch.setenv("REPORT_ART_DIR", str(tmp_path / "art"))
     monkeypatch.delenv("META_API_KEY", raising=False)
     client = TestClient(app)
+    sign_in(client, "h1")
     response = client.post("/report/monthly/illustration?household_id=h1&month=2026-02")
     assert response.status_code == 500

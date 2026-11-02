@@ -11,9 +11,11 @@ import {
 import { collapseEpisodes } from "../lib/memory";
 import type { MemoryEpisode, PreferencesMap } from "../lib/memory";
 import { useLang } from "../lib/i18n";
+import { useSession } from "../lib/session";
 
 export default function MemorySidebar() {
   const { t } = useLang();
+  const { me, loading } = useSession();
   const verdictLabel: Record<string, string> = {
     good: t.feedbackGood,
     too_early: t.feedbackEarly,
@@ -79,27 +81,31 @@ export default function MemorySidebar() {
   }, []);
 
   useEffect(() => {
-    refresh();
+    if (!loading && me) refresh();
     const onMemory = () => refresh();
     window.addEventListener("strompilot:memory", onMemory);
     return () => {
       window.removeEventListener("strompilot:memory", onMemory);
     };
-  }, [refresh]);
+  }, [refresh, loading, me]);
 
   async function forget(key: string) {
     await forgetPreference(key);
     refresh();
   }
 
-  const keys = Object.keys(prefs.preferences).filter(
-    (key) => !isEmpty(prefs.preferences[key]),
-  );
+  const keys = me
+    ? Object.keys(prefs.preferences).filter(
+        (key) => !isEmpty(prefs.preferences[key]),
+      )
+    : [];
+  const shownEpisodes = me ? episodes : [];
   return (
     <aside className="sidebar" aria-label={t.memoryTitle}>
       <h2>{t.memoryTitle}</h2>
-      {error && <p className="error">{error}</p>}
-      {keys.length === 0 && episodes.length === 0 && (
+      {me && error && <p className="error">{error}</p>}
+      {!me && <p className="muted">{t.memoryEmpty}</p>}
+      {me && keys.length === 0 && shownEpisodes.length === 0 && (
         <p className="muted">{t.memoryEmpty}</p>
       )}
       <ul>
@@ -116,7 +122,7 @@ export default function MemorySidebar() {
         ))}
       </ul>
       <ul>
-        {collapseEpisodes(episodes).map((row) => (
+        {collapseEpisodes(shownEpisodes).map((row) => (
           <li key={row.episode.id} className="muted">
             {episodeText(row.episode.text)}
             {row.count > 1 && (

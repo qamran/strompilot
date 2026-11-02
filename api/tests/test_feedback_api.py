@@ -7,12 +7,16 @@ from fastapi.testclient import TestClient
 
 from strompilot.main import app
 
+from .auth_helpers import sign_in
+
 
 @pytest.fixture
 def feedback_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
-    """Test client with memory on a scratch database."""
+    """Signed-in test client with memory on a scratch database."""
     monkeypatch.setenv("MEMORY_DB", str(tmp_path / "memory.db"))
-    return TestClient(app)
+    client = TestClient(app)
+    sign_in(client, "h1")
+    return client
 
 
 def test_feedback_stored_and_shifts_prefs(feedback_setup: TestClient) -> None:
@@ -46,7 +50,7 @@ def test_feedback_lists_per_household(feedback_setup: TestClient) -> None:
     listed = feedback_setup.get("/feedback?household_id=h1")
     assert listed.status_code == 200
     assert [episode["kind"] for episode in listed.json()["feedback"]] == ["feedback"]
-    assert feedback_setup.get("/feedback?household_id=h2").json()["feedback"] == []
+    assert feedback_setup.get("/feedback?household_id=h2").status_code == 403
 
 
 def test_bad_verdict_rejected(feedback_setup: TestClient) -> None:

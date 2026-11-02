@@ -27,6 +27,7 @@ from strompilot.main import (
 )
 from strompilot.memory.store import MemoryStore
 from strompilot.metervision.store import MeterStore
+from tests.auth_helpers import sign_in
 from tests.fakes import (
     FakeRouter,
     FakeWallbox,
@@ -103,6 +104,7 @@ def main() -> None:
         [idle_wallbox_status()]
     )
     client = TestClient(app)
+    sign_in(client, HOUSEHOLD)
 
     fixtures: dict[str, object] = {}
     res = client.get("/prices/day-ahead", params={"date": "2026-06-01"})

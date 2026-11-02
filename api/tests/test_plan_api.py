@@ -17,6 +17,8 @@ from tests.fakes import (
 )
 from tests.test_graph import APPROVE
 
+from .auth_helpers import sign_in
+
 ANALYST_JSON = """{"facts": ["billig nachts"],
 "devices": [
 {"device": "Waschmaschine", "power_kw": 2.0, "duration_h": 2.0,
@@ -53,11 +55,14 @@ def scripted_runner(tmp_path: Path) -> PlanRunner:
 
 @pytest.fixture
 def plan_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
-    """Test client with a scripted plan runner."""
+    """Signed-in test client with a scripted plan runner."""
     monkeypatch.setenv("THREADS_DB", str(tmp_path / "threads.db"))
+    monkeypatch.setenv("MEMORY_DB", str(tmp_path / "memory.db"))
     runner = scripted_runner(tmp_path)
     app.dependency_overrides[get_plan_runner] = lambda: runner
-    yield TestClient(app)
+    client = TestClient(app)
+    sign_in(client, "h1")
+    yield client
     app.dependency_overrides.clear()
 
 

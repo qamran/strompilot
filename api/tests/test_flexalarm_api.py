@@ -11,6 +11,8 @@ from strompilot.main import app, get_watch_router
 from strompilot.prices.cache import DiskCache
 from tests.fakes import FakeRouter, day_series, reply
 
+from .auth_helpers import sign_in
+
 
 def seed_prices(cache_dir: Path, target: date) -> None:
     """Seed one cached price day with a cheap window and a spike."""
@@ -35,7 +37,9 @@ def watch_setup(
     seed_prices(cache_dir, date(2026, 6, 1))
     router = FakeRouter({"watcher": [reply('{"fire": true, "reason": "gut"}')] * 10})
     app.dependency_overrides[get_watch_router] = lambda: router
-    yield TestClient(app)
+    client = TestClient(app)
+    sign_in(client, "h1")
+    yield client
     app.dependency_overrides.clear()
 
 
@@ -89,7 +93,9 @@ def test_watch_defaults_to_tomorrow(
     router = FakeRouter({"watcher": [reply('{"fire": true, "reason": "gut"}')] * 10})
     app.dependency_overrides[get_watch_router] = lambda: router
     try:
-        run = TestClient(app).post("/flexalarm/watch?household_id=h1")
+        client = TestClient(app)
+        sign_in(client, "h1")
+        run = client.post("/flexalarm/watch?household_id=h1")
     finally:
         app.dependency_overrides.clear()
     assert run.status_code == 200
@@ -111,4 +117,5 @@ def test_missing_keys_returns_500(
     monkeypatch.delenv("META_API_KEY", raising=False)
     monkeypatch.delenv("BASETEN_API_KEY", raising=False)
     client = TestClient(app)
+    sign_in(client, "h1")
     assert client.post("/flexalarm/watch?household_id=h1").status_code == 500

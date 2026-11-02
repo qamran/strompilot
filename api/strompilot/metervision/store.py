@@ -182,6 +182,31 @@ class MeterStore:
             ).fetchall()
         return [self._to_reading(row) for row in rows]
 
+    def has_data(self, household_id: str) -> bool:
+        """Report whether one household owns any reading."""
+        household_id = _require("household_id", household_id)
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM meter_readings WHERE household_id = ? LIMIT 1",
+                (household_id,),
+            ).fetchone()
+        return row is not None
+
+    def copy_household(self, source: str, target: str) -> int:
+        """Copy one household's readings, sharing the photo files."""
+        source = _require("source", source)
+        target = _require("target", target)
+        with self._connect() as conn:
+            count = conn.execute(
+                "INSERT INTO meter_readings (household_id, value_kwh, read_at,"
+                " status, confidence, sam_box, photo_path, serial, created_at)"
+                " SELECT ?, value_kwh, read_at, status, confidence, sam_box,"
+                " photo_path, serial, created_at FROM meter_readings"
+                " WHERE household_id = ? ORDER BY id",
+                (target, source),
+            ).rowcount
+        return count
+
     @staticmethod
     def _to_reading(row: tuple[object, ...]) -> MeterReading:
         """Map one database row to a MeterReading."""

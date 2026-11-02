@@ -12,7 +12,9 @@ export default function TraceStream({ threadId }: { threadId: string }) {
   const [done, setDone] = useState(false);
 
   useEffect(() => {
-    const source = new EventSource(traceUrl(threadId));
+    const source = new EventSource(traceUrl(threadId), {
+      withCredentials: true,
+    });
     source.onmessage = (event) => {
       const text = String(event.data ?? "");
       if (text === "[done]") {

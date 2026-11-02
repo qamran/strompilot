@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { Archivo, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { LangProvider } from "../lib/i18n";
+import { SessionProvider } from "../lib/session";
 import Shell from "../components/Shell";
 
 const archivo = Archivo({
@@ -29,7 +30,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     >
       <body className="min-h-full">
         <LangProvider>
-          <Shell>{children}</Shell>
+          <SessionProvider>
+            <Shell>{children}</Shell>
+          </SessionProvider>
         </LangProvider>
       </body>
     </html>

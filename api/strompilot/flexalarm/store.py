@@ -154,6 +154,38 @@ class AlertStore:
                 (status, channel, alert_id),
             )
 
+    def has_data(self, household_id: str) -> bool:
+        """Report whether one household owns any alert."""
+        household_id = _require("household_id", household_id)
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM alerts WHERE household_id = ? LIMIT 1",
+                (household_id,),
+            ).fetchone()
+        return row is not None
+
+    def copy_household(self, source: str, target: str) -> int:
+        """Copy one household's alerts into another household.
+
+        Household-scoped keys are re-scoped to the target so the copied
+        alerts keep deduplicating; foreign keys are skipped on collision.
+        """
+        source = _require("source", source)
+        target = _require("target", target)
+        prefix = f"{source}:"
+        scoped = f"{target}:"
+        with self._connect() as conn:
+            count = conn.execute(
+                "INSERT OR IGNORE INTO alerts (household_id, dedup_key, kind,"
+                " title, body, status, channel, reason, created_at)"
+                " SELECT ?, CASE WHEN SUBSTR(dedup_key, 1, ?) = ?"
+                " THEN ? || SUBSTR(dedup_key, ?) ELSE dedup_key END,"
+                " kind, title, body, status, channel, reason, created_at"
+                " FROM alerts WHERE household_id = ? ORDER BY id",
+                (target, len(prefix), prefix, scoped, len(prefix) + 1, source),
+            ).rowcount
+        return count
+
     @staticmethod
     def _to_alert(row: tuple[object, ...]) -> Alert:
         """Map one database row to an Alert."""

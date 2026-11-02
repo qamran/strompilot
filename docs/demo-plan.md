@@ -9,17 +9,20 @@ Berlin household, live day-ahead prices.
    strompilot.main:app --host 127.0.0.1 --port 8000`.
 2. Start the web app: `cd web; npm run start -- --port 3100`.
 3. Confirm both answer: `/health` returns 200, `/` renders.
-4. Open Chrome with translate off and these tabs:
+4. Sign in on http://127.0.0.1:3100/signin as demo@example.de and
+   click the development link. Every household view needs this session.
+5. Open Chrome with translate off and these tabs:
    - http://127.0.0.1:3100/ (Prices)
-   - http://127.0.0.1:3100/plan?thread=fcf0f931616849b1baec8382ada7bd75
+   - http://127.0.0.1:3100/plan?thread=914f97b011994a5c869a75b79d3c240d
      (seeded approved plan, the fallback if live planning stalls)
    - http://127.0.0.1:3100/meter
    - http://127.0.0.1:3100/alarms
    - http://127.0.0.1:3100/about
    - http://127.0.0.1:3100/household
-5. Keep the seed script ready, not run: `scripts/seed_demo.py` rebuilds
+   - http://127.0.0.1:3100/account
+6. Keep the seed script ready, not run: `scripts/seed_demo.py` rebuilds
    the showcase case in about two minutes if the database is ever
-   wiped mid-demo.
+   wiped mid-demo. It signs in as the demo email by itself.
 
 ## Script
 
@@ -77,5 +80,5 @@ unless you agree, personal data stripped before every model call."
 - Data honesty: hourly feed while tariffs settle quarter-hourly,
   standard-profile estimates, grid fees and holidays approximated.
   Every caveat is printed in the UI, not hidden.
-- Auth: the demo runs one fixed household. Login and per-user data
-  are the next tracked issue, openly, not silently missing.
+- Auth: magic-link sign-in, one household per email, sessions expire
+  and revoke. The Account view adopts the legacy local profile.

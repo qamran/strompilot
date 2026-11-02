@@ -12,11 +12,14 @@ import {
 } from "../../lib/api";
 import type { MemoryEpisode } from "../../lib/memory";
 import { useLang } from "../../lib/i18n";
+import { useSession } from "../../lib/session";
+import SignInPrompt from "../../components/SignInPrompt";
 
 const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 export default function HouseholdPage() {
   const { t } = useLang();
+  const { me, loading } = useSession();
   const [devices, setDevices] = useState<string[]>([]);
   const [draft, setDraft] = useState("");
   const [quietStart, setQuietStart] = useState("");
@@ -47,6 +50,7 @@ export default function HouseholdPage() {
   }
 
   useEffect(() => {
+    if (loading || !me) return;
     let live = true;
     fetchPreferences()
       .then((prefs) => {
@@ -71,7 +75,7 @@ export default function HouseholdPage() {
     return () => {
       live = false;
     };
-  }, []);
+  }, [loading, me]);
 
   async function run(action: () => Promise<void>) {
     setError("");
@@ -128,6 +132,10 @@ export default function HouseholdPage() {
       await forgetHousehold();
       setNote(t.dangerDone);
     });
+  }
+
+  if (!loading && !me) {
+    return <SignInPrompt />;
   }
 
   return (

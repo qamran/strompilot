@@ -24,6 +24,8 @@ from fastapi import (
     File,
     HTTPException,
     Query,
+    Request,
+    Response,
     UploadFile,
 )
 from fastapi.middleware.cors import CORSMiddleware
@@ -37,6 +39,9 @@ from pydantic import BaseModel
 from strompilot.agents.router import ModelRouter
 from strompilot.agents.state import PlanState
 from strompilot.agents.supervisor import build_graph
+from strompilot.auth.mail import LogMailer, Mailer, mailer_from_env
+from strompilot.auth.models import AuthError, Session
+from strompilot.auth.store import AuthStore
 from strompilot.contract import CONTRACT_VERSION, HealthResponse
 from strompilot.flexalarm.loop import run_once
 from strompilot.flexalarm.models import Alert, WatchReport
@@ -81,7 +86,8 @@ app = FastAPI(title="Strompilot API", version="0.1.0")
 
 # The browser Leitstand reads the API cross-origin (web port vs API
 # port), so the local frontend origins are allowed explicitly. Nothing
-# else gets CORS headers. SP-15 revisits this for hosted auth.
+# else gets CORS headers. Credentials stay on so the session cookie
+# travels; hosted deployments narrow the origins again.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -90,6 +96,7 @@ app.add_middleware(
         "http://127.0.0.1:3100",
         "http://localhost:3100",
     ],
+    allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
@@ -103,6 +110,186 @@ def read_health() -> HealthResponse:
         service="strompilot-api",
         contract_version=CONTRACT_VERSION,
     )
+
+
+SESSION_COOKIE = "sp_session"
+
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _auth_store() -> AuthStore:
+    """Open the auth store on the household database."""
+    return AuthStore(_memory_db())
+
+
+def _web_url() -> str:
+    """Return the frontend base URL, honoring STROMPILOT_WEB_URL."""
+    return os.environ.get("STROMPILOT_WEB_URL", "http://127.0.0.1:3100").rstrip("/")
+
+
+def _mailer() -> Mailer:
+    """Select the magic-link mailer from the environment."""
+    return mailer_from_env()
+
+
+def current_session(request: Request) -> Session:
+    """Load the request's session from its cookie, or answer 401."""
+    raw = request.cookies.get(SESSION_COOKIE, "")
+    try:
+        return _auth_store().load_session(raw)
+    except AuthError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+
+def _guard(session: Session, claimed: str) -> str:
+    """Accept one claimed household only when it matches the session."""
+    if not claimed.strip():
+        raise HTTPException(status_code=422, detail="household_id must not be blank")
+    if claimed != session.household_id:
+        raise HTTPException(
+            status_code=403, detail="household does not match the session"
+        )
+    return session.household_id
+
+
+def _set_session_cookie(response: Response, raw: str) -> None:
+    """Store one session token in a hardened cookie."""
+    response.set_cookie(
+        SESSION_COOKIE,
+        raw,
+        max_age=30 * 24 * 3600,
+        httponly=True,
+        samesite="lax",
+        secure=os.environ.get("STROMPILOT_COOKIE_SECURE", "0") == "1",
+        path="/",
+    )
+
+
+class RequestLinkBody(BaseModel):
+    """One magic-link request for one email address."""
+
+    email: str
+
+
+class RequestLinkResponse(BaseModel):
+    """Magic-link receipt; dev_link exists in log mode only."""
+
+    email: str
+    sent: bool
+    dev_link: str | None = None
+
+
+class SessionResponse(BaseModel):
+    """One signed-in household with its session expiry."""
+
+    email: str
+    household_id: str
+    expires_at: str
+
+
+class SignOutResponse(BaseModel):
+    """Sign-out receipt."""
+
+    signed_out: bool
+
+
+class MigrateBody(BaseModel):
+    """Migrate one legacy local household into the signed-in account."""
+
+    from_household: str
+
+
+class MigrateResponse(BaseModel):
+    """Migration receipt with per-table row counts."""
+
+    household_id: str
+    migrated: dict[str, int]
+
+
+@app.post("/auth/request-link", response_model=RequestLinkResponse)
+def request_link(body: RequestLinkBody) -> RequestLinkResponse:
+    """Send one magic link to one email address."""
+    email = body.email.strip().lower()
+    if _EMAIL_RE.match(email) is None:
+        raise HTTPException(status_code=422, detail="email must be valid")
+    try:
+        raw = _auth_store().issue_token(email)
+    except AuthError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    link = f"{_web_url()}/auth/verify?token={raw}"
+    mailer = _mailer()
+    mailer.send(email, link)
+    return RequestLinkResponse(
+        email=email,
+        sent=True,
+        dev_link=link if isinstance(mailer, LogMailer) else None,
+    )
+
+
+@app.get("/auth/verify", response_model=SessionResponse)
+def verify_link(token: str, response: Response) -> SessionResponse:
+    """Redeem one magic link for a session cookie."""
+    try:
+        email = _auth_store().consume_token(token)
+        raw = _auth_store().create_session(email)
+        session = _auth_store().load_session(raw)
+    except AuthError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    _set_session_cookie(response, raw)
+    return SessionResponse(
+        email=session.email,
+        household_id=session.household_id,
+        expires_at=session.expires_at.isoformat(),
+    )
+
+
+@app.get("/auth/me", response_model=SessionResponse)
+def read_me(session: Session = Depends(current_session)) -> SessionResponse:
+    """Report the signed-in household."""
+    return SessionResponse(
+        email=session.email,
+        household_id=session.household_id,
+        expires_at=session.expires_at.isoformat(),
+    )
+
+
+@app.post("/auth/sign-out", response_model=SignOutResponse)
+def sign_out(request: Request, response: Response) -> SignOutResponse:
+    """Revoke the request's session and clear its cookie."""
+    raw = request.cookies.get(SESSION_COOKIE, "")
+    if raw:
+        _auth_store().revoke_session(raw)
+    response.delete_cookie(SESSION_COOKIE, path="/")
+    return SignOutResponse(signed_out=True)
+
+
+@app.post("/auth/migrate", response_model=MigrateResponse)
+def migrate_household(
+    body: MigrateBody, session: Session = Depends(current_session)
+) -> MigrateResponse:
+    """Copy one legacy local household into the signed-in account."""
+    source = body.from_household.strip()
+    if not source:
+        raise HTTPException(status_code=422, detail="from_household required")
+    if source == session.household_id:
+        raise HTTPException(status_code=422, detail="households must differ")
+    memory = _store()
+    meter = MeterStore(_memory_db())
+    alerts = AlertStore(_memory_db())
+    if not (
+        memory.has_data(source) or meter.has_data(source) or alerts.has_data(source)
+    ):
+        raise HTTPException(status_code=404, detail="source household is empty")
+    if (
+        memory.has_data(session.household_id)
+        or meter.has_data(session.household_id)
+        or alerts.has_data(session.household_id)
+    ):
+        raise HTTPException(status_code=409, detail="account already has data")
+    copied = memory.copy_household(source, session.household_id)
+    copied["readings"] = meter.copy_household(source, session.household_id)
+    copied["alerts"] = alerts.copy_household(source, session.household_id)
+    return MigrateResponse(household_id=session.household_id, migrated=copied)
 
 
 def _cache_dir() -> Path:
@@ -161,8 +348,11 @@ def _store() -> MemoryStore:
 
 
 @app.get("/memory/preferences", response_model=PreferencesResponse)
-def read_preferences(household_id: str) -> PreferencesResponse:
+def read_preferences(
+    household_id: str, session: Session = Depends(current_session)
+) -> PreferencesResponse:
     """List every preference of one household."""
+    household_id = _guard(session, household_id)
     try:
         preferences = _store().list_preferences(household_id)
     except MemoryError as exc:
@@ -175,9 +365,13 @@ def read_preferences(household_id: str) -> PreferencesResponse:
 
 @app.put("/memory/preferences/{key}", response_model=Preference)
 def write_preference(
-    key: str, household_id: str, body: SetPreferenceBody
+    key: str,
+    household_id: str,
+    body: SetPreferenceBody,
+    session: Session = Depends(current_session),
 ) -> Preference:
     """Create or overwrite one preference."""
+    household_id = _guard(session, household_id)
     try:
         return _store().set_preference(household_id, key, body.value)
     except MemoryError as exc:
@@ -185,8 +379,11 @@ def write_preference(
 
 
 @app.delete("/memory/preferences/{key}")
-def remove_preference(key: str, household_id: str) -> dict[str, bool]:
+def remove_preference(
+    key: str, household_id: str, session: Session = Depends(current_session)
+) -> dict[str, bool]:
     """Delete one preference, or 404 when it never existed."""
+    household_id = _guard(session, household_id)
     try:
         deleted = _store().delete_preference(household_id, key)
     except MemoryError as exc:
@@ -201,8 +398,10 @@ def read_history(
     household_id: str,
     kind: str | None = None,
     limit: int = Query(default=50, ge=1, le=200),
+    session: Session = Depends(current_session),
 ) -> EpisodesResponse:
     """List one household's memories, newest first."""
+    household_id = _guard(session, household_id)
     try:
         episodes = _store().list_episodes(household_id, kind=kind, limit=limit)
     except MemoryError as exc:
@@ -211,8 +410,13 @@ def read_history(
 
 
 @app.post("/memory/history", response_model=Episode)
-def append_history(household_id: str, body: AddEpisodeBody) -> Episode:
+def append_history(
+    household_id: str,
+    body: AddEpisodeBody,
+    session: Session = Depends(current_session),
+) -> Episode:
     """Append one timestamped memory."""
+    household_id = _guard(session, household_id)
     try:
         return _store().add_episode(household_id, body.kind, body.text)
     except MemoryError as exc:
@@ -220,8 +424,11 @@ def append_history(household_id: str, body: AddEpisodeBody) -> Episode:
 
 
 @app.delete("/memory/history/{episode_id}")
-def remove_episode(episode_id: int, household_id: str) -> dict[str, bool]:
+def remove_episode(
+    episode_id: int, household_id: str, session: Session = Depends(current_session)
+) -> dict[str, bool]:
     """Delete one memory of one household, or 404."""
+    household_id = _guard(session, household_id)
     try:
         deleted = _store().delete_episode(household_id, episode_id)
     except MemoryError as exc:
@@ -232,8 +439,11 @@ def remove_episode(episode_id: int, household_id: str) -> dict[str, bool]:
 
 
 @app.delete("/memory/household")
-def forget_household(household_id: str) -> dict[str, bool]:
+def forget_household(
+    household_id: str, session: Session = Depends(current_session)
+) -> dict[str, bool]:
     """Delete every preference and memory of one household."""
+    household_id = _guard(session, household_id)
     try:
         _store().forget_household(household_id)
     except MemoryError as exc:
@@ -303,11 +513,14 @@ def _thread_config(thread_id: str) -> RunnableConfig:
 def _read_status(
     thread_id: str,
     graph: CompiledStateGraph[PlanState, None, PlanState, PlanState],
+    owner: str | None = None,
 ) -> ApprovalStatus:
     """Derive one thread's approval status from its checkpoint."""
     state = graph.get_state(_thread_config(thread_id))
     if not state.values:
         raise HTTPException(status_code=404, detail="thread not found")
+    if owner is not None and state.values.get("household_id") != owner:
+        raise HTTPException(status_code=403, detail="thread belongs elsewhere")
     for task in state.tasks:
         for found in task.interrupts:
             review = found.value
@@ -339,9 +552,10 @@ def read_thread(
     graph: CompiledStateGraph[PlanState, None, PlanState, PlanState] = Depends(
         get_approval_graph
     ),
+    session: Session = Depends(current_session),
 ) -> ApprovalStatus:
     """Report one thread's approval state."""
-    return _read_status(thread_id, graph)
+    return _read_status(thread_id, graph, session.household_id)
 
 
 @app.post("/approvals/threads/{thread_id}/decide", response_model=ApprovalStatus)
@@ -351,16 +565,17 @@ def decide_thread(
     graph: CompiledStateGraph[PlanState, None, PlanState, PlanState] = Depends(
         get_approval_graph
     ),
+    session: Session = Depends(current_session),
 ) -> ApprovalStatus:
     """Resume one paused thread with a human decision."""
-    current = _read_status(thread_id, graph)
+    current = _read_status(thread_id, graph, session.household_id)
     if current.status != "paused":
         raise HTTPException(status_code=409, detail="thread is not awaiting approval")
     graph.invoke(
         Command(resume={"approved": body.approved}),
         _thread_config(thread_id),
     )
-    return _read_status(thread_id, graph)
+    return _read_status(thread_id, graph, session.household_id)
 
 
 class AlertsResponse(BaseModel):
@@ -385,8 +600,10 @@ def trigger_watch(
     date: date | None = None,
     lang: Literal["de", "en"] = "de",
     router: ModelRouter = Depends(get_watch_router),
+    session: Session = Depends(current_session),
 ) -> WatchReport:
     """Run one watcher pass over one household and price day."""
+    household_id = _guard(session, household_id)
     now = datetime.now(BERLIN)
     target = date or now.date() + timedelta(days=1)
     try:
@@ -409,8 +626,10 @@ def trigger_watch(
 def read_alerts(
     household_id: str,
     limit: int = Query(default=50, ge=1, le=200),
+    session: Session = Depends(current_session),
 ) -> AlertsResponse:
     """List one household's alerts, oldest first."""
+    household_id = _guard(session, household_id)
     try:
         alerts = AlertStore(_memory_db()).list_alerts(household_id, limit=limit)
     except MemoryError as exc:
@@ -478,14 +697,14 @@ def propose_reading(
     file: UploadFile = File(...),
     keep_photo: bool = False,
     vision: MeterVision = Depends(get_meter_vision),
+    session: Session = Depends(current_session),
 ) -> MeterReading:
     """Read one meter photo into a proposed reading.
 
     Photos are processed in memory and never stored unless keep_photo
     is set with explicit household consent.
     """
-    if not household_id.strip():
-        raise HTTPException(status_code=422, detail="household_id must not be blank")
+    household_id = _guard(session, household_id)
     mime = file.content_type or ""
     extension = _METER_MIME_EXTENSIONS.get(mime)
     if extension is None:
@@ -527,8 +746,13 @@ def propose_reading(
 
 
 @app.get("/meter/readings/{reading_id}/photo")
-def read_reading_photo(reading_id: int, household_id: str) -> FileResponse:
+def read_reading_photo(
+    reading_id: int,
+    household_id: str,
+    session: Session = Depends(current_session),
+) -> FileResponse:
     """Serve one stored meter photo, kept only under explicit consent."""
+    household_id = _guard(session, household_id)
     try:
         reading = MeterStore(_memory_db()).get(household_id, reading_id)
     except MeterError as exc:
@@ -553,8 +777,10 @@ def read_reading_photo(reading_id: int, household_id: str) -> FileResponse:
 def read_readings(
     household_id: str,
     limit: int = Query(default=50, ge=1, le=200),
+    session: Session = Depends(current_session),
 ) -> ReadingsResponse:
     """List one household's meter readings, oldest first."""
+    household_id = _guard(session, household_id)
     try:
         readings = MeterStore(_memory_db()).list_readings(household_id, limit=limit)
     except MeterError as exc:
@@ -579,8 +805,10 @@ def confirm_reading(
     reading_id: int,
     household_id: str,
     body: ConfirmBody,
+    session: Session = Depends(current_session),
 ) -> ConfirmResponse:
     """Confirm one reading and show the re-plan diff, if any."""
+    household_id = _guard(session, household_id)
     store = MeterStore(_memory_db())
     memory = _store()
     try:
@@ -653,8 +881,13 @@ class FeedbackListResponse(BaseModel):
 
 
 @app.post("/feedback", response_model=FeedbackResponse)
-def submit_feedback(household_id: str, body: FeedbackBody) -> FeedbackResponse:
+def submit_feedback(
+    household_id: str,
+    body: FeedbackBody,
+    session: Session = Depends(current_session),
+) -> FeedbackResponse:
     """Store one verdict and fold it into the learned windows."""
+    household_id = _guard(session, household_id)
     try:
         feedback = Feedback(device=body.device, verdict=body.verdict, note=body.note)
     except ValueError as exc:
@@ -681,8 +914,10 @@ def submit_feedback(household_id: str, body: FeedbackBody) -> FeedbackResponse:
 def read_feedback(
     household_id: str,
     limit: int = Query(default=50, ge=1, le=200),
+    session: Session = Depends(current_session),
 ) -> FeedbackListResponse:
     """List one household's feedback, newest first."""
+    household_id = _guard(session, household_id)
     try:
         episodes = _store().list_episodes(household_id, kind="feedback", limit=limit)
     except MemoryError as exc:
@@ -750,10 +985,10 @@ def read_monthly_report(
     month: str,
     flat_ct_kwh: float = Query(default=40.0, gt=0),
     lang: Literal["de", "en"] = "de",
+    session: Session = Depends(current_session),
 ) -> MonthlyReportResponse:
     """Build one month of priced background use with savings."""
-    if not household_id.strip():
-        raise HTTPException(status_code=422, detail="household_id must not be blank")
+    household_id = _guard(session, household_id)
     year, month_number = _checked_month(month)
     annual = _annual_pref(_store(), household_id)
     report = build_month(year, month_number, annual, _month_loader, flat_ct_kwh, lang)
@@ -771,10 +1006,10 @@ def make_illustration(
     household_id: str,
     month: str,
     images: ImageClient = Depends(get_image_client),
+    session: Session = Depends(current_session),
 ) -> IllustrationResponse:
     """Generate or return the cached cover art for one month."""
-    if not household_id.strip():
-        raise HTTPException(status_code=422, detail="household_id must not be blank")
+    household_id = _guard(session, household_id)
     _checked_month(month)
     art = _art_path(household_id, month)
     if art.exists():
@@ -805,7 +1040,9 @@ class PlanRunner:
     wallbox: WallboxDriver
 
 
-def record_run_error(threads_db: Path, thread_id: str, message: str) -> None:
+def record_run_error(
+    threads_db: Path, thread_id: str, message: str, household_id: str = ""
+) -> None:
     """Persist one background-run crash beside the checkpoints."""
     conn = sqlite3.connect(threads_db)
     try:
@@ -814,9 +1051,16 @@ def record_run_error(threads_db: Path, thread_id: str, message: str) -> None:
                 "CREATE TABLE IF NOT EXISTS run_errors "
                 "(thread_id TEXT PRIMARY KEY, message TEXT NOT NULL)"
             )
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(run_errors)")}
+            if "household_id" not in columns:
+                conn.execute(
+                    "ALTER TABLE run_errors ADD COLUMN household_id TEXT NOT NULL"
+                    " DEFAULT ''"
+                )
             conn.execute(
-                "INSERT OR REPLACE INTO run_errors (thread_id, message) VALUES (?, ?)",
-                (thread_id, message),
+                "INSERT OR REPLACE INTO run_errors"
+                " (thread_id, message, household_id) VALUES (?, ?, ?)",
+                (thread_id, message, household_id),
             )
     finally:
         conn.close()
@@ -837,6 +1081,26 @@ def read_run_error(threads_db: Path, thread_id: str) -> str | None:
     finally:
         conn.close()
     return str(row[0]) if row else None
+
+
+def read_run_owner(threads_db: Path, thread_id: str) -> str | None:
+    """Read one recorded crash's household, or None when unknown."""
+    if not threads_db.exists():
+        return None
+    conn = sqlite3.connect(threads_db)
+    try:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(run_errors)")}
+        if "household_id" not in columns:
+            return None
+        row = conn.execute(
+            "SELECT household_id FROM run_errors WHERE thread_id = ?",
+            (thread_id,),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    finally:
+        conn.close()
+    return str(row[0]) if row and row[0] else None
 
 
 def get_plan_runner() -> PlanRunner:
@@ -914,7 +1178,7 @@ def _run_plan_to_pause(
                 _thread_config(thread_id),
             )
     except Exception as exc:
-        record_run_error(runner.threads_db, thread_id, str(exc))
+        record_run_error(runner.threads_db, thread_id, str(exc), household_id)
         logger.exception("plan run %s failed", thread_id)
 
 
@@ -923,10 +1187,10 @@ def start_plan(
     body: PlanBody,
     background: BackgroundTasks,
     runner: PlanRunner = Depends(get_plan_runner),
+    session: Session = Depends(current_session),
 ) -> PlanCreated:
     """Start one planning run in the background."""
-    if not body.household_id.strip():
-        raise HTTPException(status_code=422, detail="household_id must not be blank")
+    household_id = _guard(session, body.household_id)
     if not body.text.strip():
         raise HTTPException(status_code=422, detail="text must not be blank")
     thread_id = uuid.uuid4().hex
@@ -935,7 +1199,7 @@ def start_plan(
         _run_plan_to_pause,
         runner,
         thread_id,
-        body.household_id,
+        household_id,
         body.text,
         plan_day,
         body.lang,
@@ -945,7 +1209,9 @@ def start_plan(
 
 @app.get("/plan/{thread_id}", response_model=PlanDetail)
 def read_plan(
-    thread_id: str, runner: PlanRunner = Depends(get_plan_runner)
+    thread_id: str,
+    runner: PlanRunner = Depends(get_plan_runner),
+    session: Session = Depends(current_session),
 ) -> PlanDetail:
     """Read one thread's plan state."""
     recorded = read_run_error(runner.threads_db, thread_id)
@@ -955,12 +1221,21 @@ def read_plan(
             if snapshot is None:
                 if recorded is None:
                     raise HTTPException(status_code=404, detail="unknown thread")
+                owner = read_run_owner(runner.threads_db, thread_id)
+                if owner != session.household_id:
+                    raise HTTPException(
+                        status_code=403, detail="thread belongs elsewhere"
+                    )
                 values: dict[str, Any] = {}
                 status = "blocked"
             else:
                 values = snapshot.checkpoint["channel_values"]
                 if not isinstance(values, dict):
                     raise HTTPException(status_code=500, detail="unreadable thread")
+                if values.get("household_id") != session.household_id:
+                    raise HTTPException(
+                        status_code=403, detail="thread belongs elsewhere"
+                    )
                 graph = build_graph(
                     runner.router,
                     runner.loader_for(datetime.now(BERLIN).date()),
@@ -1018,7 +1293,9 @@ def _trace_events(thread_id: str, runner: PlanRunner) -> Iterator[str]:
 
 @app.get("/plan/{thread_id}/trace")
 def stream_trace(
-    thread_id: str, runner: PlanRunner = Depends(get_plan_runner)
+    thread_id: str,
+    runner: PlanRunner = Depends(get_plan_runner),
+    session: Session = Depends(current_session),
 ) -> StreamingResponse:
     """Stream one thread's audit trace as server-sent events."""
     try:
@@ -1028,6 +1305,11 @@ def stream_trace(
         raise HTTPException(status_code=404, detail="unknown thread") from exc
     if snapshot is None:
         raise HTTPException(status_code=404, detail="unknown thread")
+    values = snapshot.checkpoint.get("channel_values")
+    if not isinstance(values, dict) or values.get("household_id") != (
+        session.household_id
+    ):
+        raise HTTPException(status_code=403, detail="thread belongs elsewhere")
     return StreamingResponse(
         _trace_events(thread_id, runner), media_type="text/event-stream"
     )

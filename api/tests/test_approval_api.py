@@ -20,6 +20,8 @@ from tests.fakes import (
 )
 from tests.test_graph import APPROVE
 
+from .auth_helpers import sign_in
+
 
 def scripted_router() -> FakeRouter:
     from strompilot.llm.client import SPARK_OPEN_MODEL, WONDER_MODEL
@@ -39,7 +41,11 @@ def pause_thread(saver_path: Path, thread_id: str) -> None:
     with SqliteSaver.from_conn_string(str(saver_path)) as saver:
         graph = build_graph(scripted_router(), stub_loader, checkpointer=saver)
         graph.invoke(
-            {"request": "plane meinen Tag", "approval": "pending"},
+            {
+                "request": "plane meinen Tag",
+                "household_id": "h1",
+                "approval": "pending",
+            },
             thread_config(thread_id),
         )
 
@@ -48,16 +54,19 @@ def pause_thread(saver_path: Path, thread_id: str) -> None:
 def approval_setup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> Iterator[tuple[TestClient, Path]]:
-    """Test client with the approval graph on a scratch database."""
+    """Signed-in test client with the approval graph on scratch."""
     saver_path = tmp_path / "threads.db"
     monkeypatch.setenv("THREADS_DB", str(saver_path))
+    monkeypatch.setenv("MEMORY_DB", str(tmp_path / "memory.db"))
 
     def override() -> Any:
         with SqliteSaver.from_conn_string(str(saver_path)) as saver:
             yield build_graph(FakeRouter({}), stub_loader, checkpointer=saver)
 
     app.dependency_overrides[get_approval_graph] = override
-    yield TestClient(app), saver_path
+    client = TestClient(app)
+    sign_in(client, "h1")
+    yield client, saver_path
     app.dependency_overrides.clear()
 
 
@@ -104,7 +113,10 @@ def test_finished_thread_without_plan_reports_done(
     router = FakeRouter({"supervisor": [reply("other")]})
     with SqliteSaver.from_conn_string(str(saver_path)) as saver:
         graph = build_graph(router, stub_loader, checkpointer=saver)
-        graph.invoke({"request": "erzaehl einen Witz"}, thread_config("t9"))
+        graph.invoke(
+            {"request": "erzaehl einen Witz", "household_id": "h1"},
+            thread_config("t9"),
+        )
     response = client.get("/approvals/threads/t9")
     assert response.status_code == 200
     assert response.json()["status"] == "done"
@@ -138,7 +150,9 @@ def test_missing_keys_returns_500(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("THREADS_DB", str(tmp_path / "threads.db"))
+    monkeypatch.setenv("MEMORY_DB", str(tmp_path / "memory.db"))
     monkeypatch.delenv("META_API_KEY", raising=False)
     monkeypatch.delenv("BASETEN_API_KEY", raising=False)
     client = TestClient(app)
+    sign_in(client, "h1")
     assert client.get("/approvals/threads/t1").status_code == 500

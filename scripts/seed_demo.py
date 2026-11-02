@@ -1,15 +1,16 @@
 """Seed one rich demo household through the real API.
 
-Builds a complete showcase case for demo-haushalt: household prefs
-(devices, quiet hours, annual use); a full plan run that pauses, gets
-approved, and collects feedback; two meter photos with serials,
-photos, and calibration; plus one watcher pass. Every row is created
-through the public endpoints, so the data is exactly what real usage
-produces. Run from the repo root with the backend up:
+Signs in as the demo email over the public magic-link flow, then builds
+a complete showcase case: household prefs (devices, quiet hours, annual
+use); a full plan run that pauses, gets approved, and collects feedback;
+two meter photos with serials, photos, and calibration; plus one watcher
+pass. Every row is created through the public endpoints, so the data is
+exactly what real usage produces. Run from the repo root with the
+backend up in log-mailer mode:
 
     .venv\\Scripts\\python.exe scripts/seed_demo.py
 
-Options: --api, --household, --lang, --web (for the printed links).
+Options: --api, --email, --lang, --web (for the printed links).
 """
 
 import argparse
@@ -31,7 +32,15 @@ def poll_plan(client: httpx.Client, thread_id: str) -> dict:
     """Wait until one plan run pauses, fails loudly on error."""
     deadline = time.time() + 600
     while time.time() < deadline:
-        detail = client.get(f"/plan/{thread_id}").json()
+        try:
+            detail = client.get(f"/plan/{thread_id}").json()
+        except (
+            httpx.RemoteProtocolError,
+            httpx.ConnectError,
+            httpx.ReadTimeout,
+        ):
+            time.sleep(5)
+            continue
         status = detail.get("status")
         if status in ("paused", "published"):
             return detail
@@ -46,11 +55,24 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Seed the demo household.")
     parser.add_argument("--api", default="http://127.0.0.1:8000")
     parser.add_argument("--web", default="http://127.0.0.1:3100")
-    parser.add_argument("--household", default="demo-haushalt")
+    parser.add_argument("--email", default="demo@example.de")
     parser.add_argument("--lang", default="en", choices=["de", "en"])
     args = parser.parse_args()
-    household = args.household
     client = httpx.Client(base_url=args.api, timeout=TIMEOUT)
+
+    requested = client.post("/auth/request-link", json={"email": args.email})
+    requested.raise_for_status()
+    dev_link = requested.json().get("dev_link")
+    if not dev_link:
+        raise SystemExit(
+            "no dev link returned: seed needs the log mailer "
+            "(STROMPILOT_MAILER unset or log)"
+        )
+    token = dev_link.split("token=")[1]
+    verified = client.get(f"/auth/verify?token={token}")
+    verified.raise_for_status()
+    household = verified.json()["household_id"]
+    print(f"signed in as {args.email} in household {household}")
 
     prefs = {
         "devices": ["Waschmaschine", "Geschirrspueler", "E-Auto"],

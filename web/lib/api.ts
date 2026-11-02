@@ -35,19 +35,46 @@ import {
   type FeedbackListResponse,
   type FeedbackResponse,
 } from "./feedback";
+import {
+  parseMigrateResponse,
+  parseRequestLinkResponse,
+  parseSessionResponse,
+  type MigrateReceipt,
+  type RequestLinkReceipt,
+  type SessionInfo,
+} from "./auth";
 import type { Lang } from "./i18n";
 
 export const API_URL =
   process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 
-export const HOUSEHOLD_ID = "demo-haushalt";
+let sessionHousehold = "demo-haushalt";
+
+export function setSessionHousehold(householdId: string): void {
+  sessionHousehold = householdId;
+}
+
+export function getSessionHousehold(): string {
+  return sessionHousehold;
+}
+
+export function isAuthError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.message.startsWith("API 401") ||
+      error.message.startsWith("API 403"))
+  );
+}
 
 async function request<T>(
   path: string,
   parse: (value: unknown) => T,
   init?: RequestInit,
 ): Promise<T> {
-  const res = await fetch(`${API_URL}${path}`, init);
+  const res = await fetch(`${API_URL}${path}`, {
+    credentials: "include",
+    ...init,
+  });
   if (!res.ok) {
     const detail = await res.text();
     throw new Error(`API ${res.status}: ${detail.slice(0, 200)}`);
@@ -57,8 +84,46 @@ async function request<T>(
 
 function household(query = "", lang?: Lang): string {
   const sep = query.includes("?") ? "&" : "?";
-  const base = `${query}${sep}household_id=${encodeURIComponent(HOUSEHOLD_ID)}`;
+  const base = `${query}${sep}household_id=${encodeURIComponent(sessionHousehold)}`;
   return lang ? `${base}&lang=${lang}` : base;
+}
+
+export function requestLink(email: string): Promise<RequestLinkReceipt> {
+  return request("/auth/request-link", parseRequestLinkResponse, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+}
+
+export function verifyLink(token: string): Promise<SessionInfo> {
+  return request(
+    `/auth/verify?token=${encodeURIComponent(token)}`,
+    parseSessionResponse,
+  );
+}
+
+export function fetchMe(): Promise<SessionInfo> {
+  return request("/auth/me", parseSessionResponse);
+}
+
+export async function signOut(): Promise<void> {
+  const res = await fetch(`${API_URL}/auth/sign-out`, {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!res.ok) {
+    throw new Error(`API ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  }
+  setSessionHousehold("demo-haushalt");
+}
+
+export function migrateHousehold(fromHousehold: string): Promise<MigrateReceipt> {
+  return request("/auth/migrate", parseMigrateResponse, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ from_household: fromHousehold }),
+  });
 }
 
 export function fetchHealth(): Promise<HealthResponse> {
@@ -82,7 +147,7 @@ export function startPlan(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        household_id: HOUSEHOLD_ID,
+        household_id: sessionHousehold,
         text,
         plan_day: planDay ?? null,
         lang,
@@ -124,7 +189,7 @@ export function decideApproval(
 export function fetchAlerts(): Promise<Alert[]> {
   return request(household("/flexalarm/alerts"), (value) => {
     const parsed = parseAlertsResponse(value);
-    if (parsed.household_id !== HOUSEHOLD_ID) {
+    if (parsed.household_id !== sessionHousehold) {
       throw new Error("Alert household mismatch");
     }
     return parsed.alerts;
@@ -145,13 +210,13 @@ export async function uploadMeterPhoto(
   form.append("file", file);
   const res = await fetch(
     `${API_URL}${household("/meter/readings")}&keep_photo=${keepPhoto}`,
-    { method: "POST", body: form },
+    { method: "POST", body: form, credentials: "include" },
   );
   if (!res.ok) {
     throw new Error(`API ${res.status}: ${(await res.text()).slice(0, 200)}`);
   }
   const parsed = parseReadingsResponse({
-    household_id: HOUSEHOLD_ID,
+    household_id: sessionHousehold,
     readings: [await res.json()],
   });
   return parsed.readings[0];
@@ -215,6 +280,7 @@ export async function savePreference(key: string, value: unknown): Promise<void>
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ value }),
+      credentials: "include",
     },
   );
   if (!res.ok) {
@@ -225,7 +291,7 @@ export async function savePreference(key: string, value: unknown): Promise<void>
 export async function forgetPreference(key: string): Promise<void> {
   const res = await fetch(
     `${API_URL}${household(`/memory/preferences/${encodeURIComponent(key)}`)}`,
-    { method: "DELETE" },
+    { method: "DELETE", credentials: "include" },
   );
   if (!res.ok) {
     throw new Error(`API ${res.status}: ${(await res.text()).slice(0, 200)}`);
@@ -239,7 +305,7 @@ export function fetchHistory(): Promise<EpisodesList> {
 export async function deleteEpisode(episodeId: number): Promise<void> {
   const res = await fetch(
     `${API_URL}${household(`/memory/history/${episodeId}`)}`,
-    { method: "DELETE" },
+    { method: "DELETE", credentials: "include" },
   );
   if (!res.ok) {
     throw new Error(`API ${res.status}: ${(await res.text()).slice(0, 200)}`);
@@ -249,6 +315,7 @@ export async function deleteEpisode(episodeId: number): Promise<void> {
 export async function forgetHousehold(): Promise<void> {
   const res = await fetch(`${API_URL}${household("/memory/household")}`, {
     method: "DELETE",
+    credentials: "include",
   });
   if (!res.ok) {
     throw new Error(`API ${res.status}: ${(await res.text()).slice(0, 200)}`);

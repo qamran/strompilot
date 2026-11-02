@@ -4,6 +4,7 @@
 
 import Link from "next/link";
 import { useLang } from "../lib/i18n";
+import { useSession } from "../lib/session";
 
 export default function Header({
   alarmCount,
@@ -13,6 +14,7 @@ export default function Header({
   onPalette: () => void;
 }) {
   const { t, lang, setLang } = useLang();
+  const { me } = useSession();
   return (
     <header className="topbar">
       <Link href="/" className="brand">
@@ -24,11 +26,22 @@ export default function Header({
         <Link href="/meter">{t.navMeter}</Link>
         <Link href="/alarms">
           {t.navAlarms}
-          {alarmCount > 0 && <span className="alarm-badge">{alarmCount}</span>}
+          {me && alarmCount > 0 && (
+            <span className="alarm-badge">{alarmCount}</span>
+          )}
         </Link>
         <Link href="/about">{t.navAbout}</Link>
         <Link href="/household">{t.navHousehold}</Link>
       </nav>
+      {me ? (
+        <Link href="/account" className="account-link">
+          {t.navAccount}
+        </Link>
+      ) : (
+        <Link href="/signin" className="account-link">
+          {t.navSignIn}
+        </Link>
+      )}
       <button
         type="button"
         className="palette-hint"

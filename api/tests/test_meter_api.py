@@ -15,6 +15,8 @@ from strompilot.metervision.pipeline import MeterVision
 from strompilot.prices.cache import DiskCache
 from tests.fakes import FakeRouter, FakeSam, day_series, reply
 
+from .auth_helpers import sign_in
+
 
 def png() -> bytes:
     """100x100 red PNG upload."""
@@ -53,7 +55,9 @@ def meter_setup(
     app.dependency_overrides[get_meter_vision] = lambda: vision(
         [[], []], [digits, serial] * 6
     )
-    yield TestClient(app), tmp_path
+    client = TestClient(app)
+    sign_in(client, "h1")
+    yield client, tmp_path
     app.dependency_overrides.clear()
 
 
@@ -299,7 +303,9 @@ def test_vision_failure_returns_502(
         [[]], [LlmError("spark down")]
     )
     try:
-        response = TestClient(app).post(
+        client = TestClient(app)
+        sign_in(client, "h1")
+        response = client.post(
             "/meter/readings?household_id=h1",
             files={"file": ("meter.png", png(), "image/png")},
         )
@@ -315,6 +321,7 @@ def test_missing_keys_returns_500(
     monkeypatch.setenv("METER_PHOTOS_DIR", str(tmp_path / "photos"))
     monkeypatch.delenv("META_API_KEY", raising=False)
     client = TestClient(app)
+    sign_in(client, "h1")
     response = client.post(
         "/meter/readings?household_id=h1",
         files={"file": ("meter.png", png(), "image/png")},

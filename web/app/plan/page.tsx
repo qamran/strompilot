@@ -16,7 +16,9 @@ import {
 import type { PlanDetail, PlanSlot } from "../../lib/plan";
 import type { MonthlyReportResponse } from "../../lib/report";
 import { useLang } from "../../lib/i18n";
+import { useSession } from "../../lib/session";
 import { formatCt, formatEur } from "../../lib/format";
+import SignInPrompt from "../../components/SignInPrompt";
 import TraceStream from "../../components/TraceStream";
 import WhyOverlay from "../../components/WhyOverlay";
 import GlassBox from "../../components/GlassBox";
@@ -74,6 +76,7 @@ function currentMonth(): string {
 
 function PlanInner() {
   const { t, lang } = useLang();
+  const { me, loading } = useSession();
   const params = useSearchParams();
   const threadId = params.get("thread") ?? "";
   const [plan, setPlan] = useState<PlanDetail | null>(null);
@@ -98,7 +101,7 @@ function PlanInner() {
   }, [threadId]);
 
   useEffect(() => {
-    if (!threadId) return;
+    if (!threadId || loading || !me) return;
     fetchPlan(threadId)
       .then((detail) => {
         setPlan(detail);
@@ -113,13 +116,14 @@ function PlanInner() {
       );
     const timer = setInterval(load, 4000);
     return () => clearInterval(timer);
-  }, [load, threadId]);
+  }, [load, threadId, loading, me]);
 
   useEffect(() => {
+    if (loading || !me) return;
     fetchMonthlyReport(currentMonth(), lang)
       .then(setReport)
       .catch(() => setReport(null));
-  }, [lang]);
+  }, [lang, loading, me]);
 
   async function decide(approved: boolean) {
     if (!threadId) return;
@@ -157,6 +161,10 @@ function PlanInner() {
         : approval === "blocked"
           ? t.blockedNote
           : t.runningNote;
+
+  if (!loading && !me) {
+    return <SignInPrompt />;
+  }
 
   return (
     <>

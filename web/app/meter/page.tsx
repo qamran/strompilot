@@ -11,10 +11,13 @@ import {
 } from "../../lib/api";
 import type { MeterReading } from "../../lib/meter";
 import { useLang } from "../../lib/i18n";
+import { useSession } from "../../lib/session";
 import ConsentGate from "../../components/ConsentGate";
+import SignInPrompt from "../../components/SignInPrompt";
 
 export default function MeterPage() {
   const { t, lang } = useLang();
+  const { me, loading } = useSession();
   const [readings, setReadings] = useState<MeterReading[]>([]);
   const [file, setFile] = useState<File | null>(null);
   const [consented, setConsented] = useState(false);
@@ -33,12 +36,13 @@ export default function MeterPage() {
   }
 
   useEffect(() => {
+    if (loading || !me) return;
     fetchReadings()
       .then(setReadings)
       .catch((err: unknown) =>
         setError(err instanceof Error ? err.message : String(err)),
       );
-  }, []);
+  }, [loading, me]);
 
   async function upload() {
     if (!file || !consented) return;
@@ -65,6 +69,10 @@ export default function MeterPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
+  }
+
+  if (!loading && !me) {
+    return <SignInPrompt />;
   }
 
   return (

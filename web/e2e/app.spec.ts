@@ -30,6 +30,15 @@ async function agreeConsent(page: Page, key: "plan" | "photo") {
   expect(stored).toBe("1");
 }
 
+async function signIn(page: Page, email: string) {
+  await page.goto("/signin");
+  await page.getByRole("textbox", { name: "Email address" }).fill(email);
+  await page.getByRole("button", { name: "Send link" }).click();
+  await page.getByTestId("dev-link").click();
+  await expect(page).toHaveURL(/\/account/);
+  await expect(page.getByText(email)).toBeVisible();
+}
+
 test.beforeEach(async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (err) => errors.push(String(err)));
@@ -55,7 +64,20 @@ test("prices view loads live data", async ({ page }) => {
   await page.screenshot({ path: join(SHOTS, "prices.png") });
 });
 
+test("sign-in flow reaches the account", async ({ page }) => {
+  await page.goto("/household");
+  await expect(page.getByText("Please sign in.")).toBeVisible();
+  await signIn(page, "e2e-signin@example.de");
+  await expect(page.getByText("Adopt a local profile")).toBeVisible();
+  await page.screenshot({ path: join(SHOTS, "account.png") });
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await expect(page).toHaveURL(/\/$/);
+  await page.goto("/household");
+  await expect(page.getByText("Please sign in.")).toBeVisible();
+});
+
 test("consent remembers the choice for the session", async ({ page }) => {
+  await signIn(page, "e2e-consent@example.de");
   await page.goto("/");
   await agreeConsent(page, "plan");
   await page.reload();
@@ -89,6 +111,7 @@ test("plan journey completes, approves, and learns", async ({
   page,
 }) => {
   test.setTimeout(600_000);
+  await signIn(page, "e2e-plan@example.de");
   await page.goto("/");
   await agreeConsent(page, "plan");
   await page
@@ -122,6 +145,7 @@ test("plan journey completes, approves, and learns", async ({
 });
 
 test("meter upload reads and confirms", async ({ page }) => {
+  await signIn(page, "e2e-meter@example.de");
   await page.goto("/meter");
   await agreeConsent(page, "photo");
   const rows = page.locator("section ul li");
@@ -144,6 +168,7 @@ test("meter upload reads and confirms", async ({ page }) => {
 });
 
 test("alarms trigger a watch", async ({ page }) => {
+  await signIn(page, "e2e-alarms@example.de");
   await page.goto("/alarms");
   const cards = page.locator(".alert-card");
   const before = await cards.count();
@@ -159,6 +184,7 @@ test("alarms trigger a watch", async ({ page }) => {
 
 test("household manages devices and settings", async ({ page }) => {
   const devices = page.locator('section[aria-label="Devices"]');
+  await signIn(page, "e2e-household@example.de");
   await page.goto("/household");
   await page
     .getByRole("textbox", { name: "e.g. heat pump" })

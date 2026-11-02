@@ -199,6 +199,39 @@ class MemoryStore:
             )
         return cursor.rowcount > 0
 
+    def has_data(self, household_id: str) -> bool:
+        """Report whether one household owns any row in either table."""
+        household_id = _require("household_id", household_id)
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM preferences WHERE household_id = ?"
+                " UNION SELECT 1 FROM episodes WHERE household_id = ?"
+                " LIMIT 1",
+                (household_id, household_id),
+            ).fetchone()
+        return row is not None
+
+    def copy_household(self, source: str, target: str) -> dict[str, int]:
+        """Copy one household's prefs and episodes into another household."""
+        source = _require("source", source)
+        target = _require("target", target)
+        stamp = datetime.now(UTC).isoformat()
+        with self._connect() as conn:
+            prefs = conn.execute(
+                "INSERT OR IGNORE INTO preferences"
+                " (household_id, key, value, updated_at)"
+                " SELECT ?, key, value, ? FROM preferences"
+                " WHERE household_id = ?",
+                (target, stamp, source),
+            ).rowcount
+            episodes = conn.execute(
+                "INSERT INTO episodes (household_id, kind, text, created_at)"
+                " SELECT ?, kind, text, created_at FROM episodes"
+                " WHERE household_id = ? ORDER BY id",
+                (target, source),
+            ).rowcount
+        return {"preferences": prefs, "episodes": episodes}
+
     def forget_household(self, household_id: str) -> None:
         """Delete every preference and memory of one household."""
         household_id = _require("household_id", household_id)

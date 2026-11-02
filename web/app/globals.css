@@ -134,6 +134,10 @@ select {
   border-radius: 7px;
 }
 
+.topbar .account-link {
+  white-space: nowrap;
+}
+
 .topbar nav a:hover {
   color: var(--ink);
   background: var(--bg3);
@@ -410,6 +414,17 @@ button:hover:not(:disabled) {
 button:disabled {
   opacity: 0.45;
   cursor: default;
+}
+
+a.button-link {
+  display: inline-block;
+  background: var(--accent);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: #06130c;
+  font-weight: 700;
+  padding: 0.6rem 1.1rem;
+  text-decoration: none;
 }
 
 button.secondary {
