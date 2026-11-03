@@ -35,6 +35,55 @@ def test_loader_builds_all_in_bars(tmp_path: Path) -> None:
     assert all(bar.source == "awattar-live" for bar in loaded.bars)
 
 
+def test_loader_keys_bars_by_utc_start(tmp_path: Path) -> None:
+    target = date(2026, 10, 25)
+    base = datetime(2026, 10, 24, 22, 0, tzinfo=UTC)
+    points = [
+        PricePoint(
+            start=base + timedelta(hours=n),
+            end=base + timedelta(hours=n + 1),
+            eur_per_mwh=100.0,
+        )
+        for n in range(25)
+    ]
+    loaded = load_price_bars(
+        target,
+        tmp_path,
+        datetime(2026, 10, 24, 12, 0, tzinfo=UTC),
+        DEFAULTS,
+        awattar_fetcher=lambda day: points,
+    )
+    assert len(loaded.bars) == 25
+    assert [bar.hour for bar in loaded.bars].count(2) == 2
+    starts = [bar.start_utc for bar in loaded.bars]
+    assert all(isinstance(start, str) for start in starts)
+    assert len(set(starts)) == 25
+    ordered = [start for start in starts if isinstance(start, str)]
+    assert ordered == sorted(ordered)
+
+
+def test_loader_drops_duplicate_instants(tmp_path: Path) -> None:
+    target = date(2026, 1, 15)
+    base = datetime(2026, 1, 15, 0, 0, tzinfo=UTC)
+    point = PricePoint(start=base, end=base + timedelta(hours=1), eur_per_mwh=50.0)
+    other = PricePoint(
+        start=base + timedelta(hours=1),
+        end=base + timedelta(hours=2),
+        eur_per_mwh=60.0,
+    )
+    loaded = load_price_bars(
+        target,
+        tmp_path,
+        datetime(2026, 1, 14, 12, 0, tzinfo=UTC),
+        DEFAULTS,
+        awattar_fetcher=lambda day: [point, point, other],
+    )
+    assert [bar.price_ct_kwh for bar in loaded.bars] == [
+        decompose(50.0, DEFAULTS).total,
+        decompose(60.0, DEFAULTS).total,
+    ]
+
+
 def test_loader_falls_back_to_sample(tmp_path: Path) -> None:
     def failing(day: date) -> list[PricePoint]:
         raise ConnectionError("no network")

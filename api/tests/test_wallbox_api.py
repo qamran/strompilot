@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from strompilot.main import app, get_wallbox_client
 from strompilot.wallbox.client import WallboxError
+from tests.auth_helpers import sign_in
 from tests.fakes import FakeWallbox, idle_wallbox_status
 
 
@@ -15,12 +16,36 @@ from tests.fakes import FakeWallbox, idle_wallbox_status
 def wallbox_setup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> Iterator[tuple[TestClient, FakeWallbox]]:
-    """Test client with a scripted wallbox driver."""
-    del tmp_path, monkeypatch
+    """Signed-in test client with a scripted wallbox driver."""
+    monkeypatch.setenv("MEMORY_DB", str(tmp_path / "memory.db"))
     driver = FakeWallbox([idle_wallbox_status()])
     app.dependency_overrides[get_wallbox_client] = lambda: driver
-    yield TestClient(app), driver
+    client = TestClient(app)
+    sign_in(client, "h1")
+    yield client, driver
     app.dependency_overrides.clear()
+
+
+def test_status_requires_a_session(
+    wallbox_setup: tuple[TestClient, FakeWallbox],
+) -> None:
+    client, driver = wallbox_setup
+    client.cookies.clear()
+    assert client.get("/wallbox/status").status_code == 401
+    assert driver.status_calls == 0
+
+
+def test_program_requires_a_session(
+    wallbox_setup: tuple[TestClient, FakeWallbox],
+) -> None:
+    client, driver = wallbox_setup
+    client.cookies.clear()
+    response = client.post(
+        "/wallbox/program",
+        json={"day": "2026-06-01", "start": "02:00", "end": "04:00", "max_kw": 11.0},
+    )
+    assert response.status_code == 401
+    assert driver.programs == []
 
 
 def test_status_reports_live_state(
@@ -68,7 +93,9 @@ def test_program_rejects_bad_clock(
     assert response.status_code == 422
 
 
-def test_driver_error_returns_502() -> None:
+def test_driver_error_returns_502(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     class Failing:
         def status(self):  # type: ignore[no-untyped-def]
             raise WallboxError("sim down")
@@ -77,8 +104,11 @@ def test_driver_error_returns_502() -> None:
             del start_iso, end_iso, max_kw
             raise WallboxError("sim down")
 
+    monkeypatch.setenv("MEMORY_DB", str(tmp_path / "memory.db"))
     app.dependency_overrides[get_wallbox_client] = lambda: Failing()
     try:
-        assert TestClient(app).get("/wallbox/status").status_code == 502
+        client = TestClient(app)
+        sign_in(client, "h1")
+        assert client.get("/wallbox/status").status_code == 502
     finally:
         app.dependency_overrides.clear()

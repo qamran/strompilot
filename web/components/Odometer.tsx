@@ -6,7 +6,13 @@ import { useEffect, useRef, useState } from "react";
 import { useLang } from "../lib/i18n";
 import { formatEur } from "../lib/format";
 
-export default function Odometer({ value }: { value: number }) {
+export default function Odometer({
+  value,
+  mood = "positive",
+}: {
+  value: number;
+  mood?: "positive" | "negative";
+}) {
   const { lang } = useLang();
   const [shown, setShown] = useState(0);
   const target = useRef(value);
@@ -38,8 +44,11 @@ export default function Odometer({ value }: { value: number }) {
   }, [value]);
 
   return (
-    <span className="odometer" aria-live="polite">
-      {formatEur(shown, lang)}
+    <span className={`odometer ${mood}`}>
+      <span aria-hidden="true">{formatEur(shown, lang)}</span>
+      <span className="sr-only" aria-live="polite">
+        {formatEur(value, lang)}
+      </span>
     </span>
   );
 }

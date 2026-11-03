@@ -3,14 +3,17 @@
 /** Household view: manage devices, quiet hours, annual use, memories. */
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   deleteEpisode,
   fetchHistory,
   fetchPreferences,
   forgetHousehold,
+  forgetPreference,
   savePreference,
 } from "../../lib/api";
-import type { MemoryEpisode } from "../../lib/memory";
+import { formatEpisodeText, type MemoryEpisode } from "../../lib/memory";
+import { formatDeviceName } from "../../lib/format";
 import { useLang } from "../../lib/i18n";
 import { useSession } from "../../lib/session";
 import SignInPrompt from "../../components/SignInPrompt";
@@ -18,8 +21,8 @@ import SignInPrompt from "../../components/SignInPrompt";
 const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 export default function HouseholdPage() {
-  const { t } = useLang();
-  const { me, loading } = useSession();
+  const { t, lang } = useLang();
+  const { me, loading, refresh } = useSession();
   const [devices, setDevices] = useState<string[]>([]);
   const [draft, setDraft] = useState("");
   const [quietStart, setQuietStart] = useState("");
@@ -29,6 +32,7 @@ export default function HouseholdPage() {
   const [note, setNote] = useState("");
   const [error, setError] = useState("");
   const [armed, setArmed] = useState(false);
+  const router = useRouter();
 
   async function load() {
     try {
@@ -122,16 +126,36 @@ export default function HouseholdPage() {
     await run(() => deleteEpisode(id));
   }
 
+  async function agreeConsent() {
+    await run(async () => {
+      await savePreference("consent", {
+        agreed: true,
+        at: new Date().toISOString(),
+      });
+      await refresh();
+    });
+  }
+
+  async function revokeConsent() {
+    await run(async () => {
+      await forgetPreference("consent");
+      await refresh();
+    });
+  }
+
   async function forget() {
     if (!armed) {
       setArmed(true);
       return;
     }
     setArmed(false);
-    await run(async () => {
+    setError("");
+    try {
       await forgetHousehold();
-      setNote(t.dangerDone);
-    });
+      router.push("/signin");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
   }
 
   if (!loading && !me) {
@@ -152,8 +176,12 @@ export default function HouseholdPage() {
         <ul>
           {devices.map((device) => (
             <li key={device} className="memory-row">
-              <span>{device}</span>
-              <button type="button" onClick={() => removeDevice(device)}>
+              <span>{formatDeviceName(device, lang)}</span>
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => removeDevice(device)}
+              >
                 {t.remove}
               </button>
             </li>
@@ -223,20 +251,57 @@ export default function HouseholdPage() {
         <ul>
           {episodes.map((episode) => (
             <li key={episode.id} className="memory-row">
-              <span className="muted">{episode.text}</span>
-              <button type="button" onClick={() => removeEpisode(episode.id)}>
+              <span className="muted">
+                {formatEpisodeText(episode.text, lang, {
+                  good: t.feedbackGood,
+                  too_early: t.feedbackEarly,
+                  too_late: t.feedbackLate,
+                })}
+              </span>
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => removeEpisode(episode.id)}
+              >
                 {t.remove}
               </button>
             </li>
           ))}
         </ul>
       </section>
+      <section className="panel" aria-label={t.consentTitle}>
+        <h2>{t.consentTitle}</h2>
+        {me?.consent_agreed ? (
+          <>
+            <p className="muted">{t.consentLineAgreed}</p>
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => revokeConsent().catch(() => {})}
+            >
+              {t.consentRevoke}
+            </button>
+          </>
+        ) : (
+          <>
+            <p className="muted">{t.consentLineMissing}</p>
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => agreeConsent().catch(() => {})}
+            >
+              {t.consentOk}
+            </button>
+          </>
+        )}
+      </section>
+
       <section className="panel danger" aria-label={t.dangerTitle}>
         <h2>{t.dangerTitle}</h2>
         <p className="muted">{t.dangerBody}</p>
         <button
           type="button"
-          className={armed ? "armed" : ""}
+          className={armed ? "danger armed" : "danger"}
           onClick={() => forget().catch(() => {})}
         >
           {armed ? t.dangerConfirm : t.dangerArm}

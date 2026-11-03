@@ -2,10 +2,17 @@ import { describe, expect, it } from "vitest";
 
 import {
   collapseEpisodes,
+  formatEpisodeText,
   parseEpisodesList,
   parsePreferencesMap,
 } from "./memory";
 import type { MemoryEpisode } from "./memory";
+
+const VERDICTS = {
+  good: "Just right",
+  too_early: "Too early",
+  too_late: "Too late",
+};
 
 describe("parsePreferencesMap", () => {
   it("parses a household preference map", () => {
@@ -84,20 +91,50 @@ describe("collapseEpisodes", () => {
     expect(rows).toEqual([{ episode: episode(1, "E-Auto: good"), count: 3 }]);
   });
 
-  it("keeps order and restarts the count after a different row", () => {
+  it("merges repeats anywhere in the list, newest first", () => {
     const rows = collapseEpisodes([
-      episode(1, "E-Auto: good"),
-      episode(2, "Herd: good"),
       episode(3, "E-Auto: good"),
+      episode(2, "Herd: good"),
+      episode(1, "E-Auto: good"),
     ]);
     expect(rows.map((row) => [row.episode.id, row.count])).toEqual([
-      [1, 1],
+      [3, 2],
       [2, 1],
-      [3, 1],
     ]);
+  });
+
+  it("keeps different kinds apart", () => {
+    const note = (id: number, text: string): MemoryEpisode => ({
+      id,
+      household_id: "h1",
+      kind: "note",
+      text,
+      created_at: "2026-10-30T10:00:00+00:00",
+    });
+    const rows = collapseEpisodes([
+      episode(1, "E-Auto: good"),
+      note(2, "E-Auto: good"),
+    ]);
+    expect(rows.map((row) => row.count)).toEqual([1, 1]);
   });
 
   it("collapses an empty list to nothing", () => {
     expect(collapseEpisodes([])).toEqual([]);
+  });
+});
+
+describe("formatEpisodeText", () => {
+  it("localizes the device and verdict of feedback rows", () => {
+    expect(formatEpisodeText("Waschmaschine: good", "en", VERDICTS)).toBe(
+      "washing machine: Just right",
+    );
+    expect(formatEpisodeText("E-Auto: too_early", "de", VERDICTS)).toBe(
+      "E-Auto: Too early",
+    );
+  });
+
+  it("leaves free text without a known verdict alone", () => {
+    expect(formatEpisodeText("mag Abende", "en", VERDICTS)).toBe("mag Abende");
+    expect(formatEpisodeText("Herd: maybe", "en", VERDICTS)).toBe("Herd: maybe");
   });
 });

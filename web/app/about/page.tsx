@@ -4,6 +4,7 @@
 
 import { useEffect, useState } from "react";
 import { fetchAlerts, fetchHistory, fetchPrices } from "../../lib/api";
+import { allInCt } from "../../lib/prices";
 import type { Alert } from "../../lib/flexalarm";
 import type { EpisodesList } from "../../lib/memory";
 import { formatCt } from "../../lib/format";
@@ -52,7 +53,7 @@ export default function AboutPage() {
         const low = prices.value.prices.reduce((a, b) =>
           a.eur_per_mwh <= b.eur_per_mwh ? a : b,
         );
-        cheapest = `${low.start.slice(11, 13)}:00 · ${formatCt(low.eur_per_mwh / 10, lang)}/kWh`;
+        cheapest = `${low.start.slice(11, 13)}:00 · ${formatCt(allInCt(low), lang)}/kWh`;
       }
       const signedIn = !loading && me !== null;
       setStats({

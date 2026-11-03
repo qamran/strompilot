@@ -106,6 +106,21 @@ def test_analyze_parses_unmatched_asks() -> None:
     assert analysis.constraints.unmatched == ["Sauna: unknown device, no power profile"]
 
 
+def test_unmatched_entries_are_capped() -> None:
+    long_ask = "x" * 500
+    router = FakeRouter(
+        {
+            "analyst": [
+                reply(f'{{"facts": [], "devices": [], "unmatched": ["{long_ask}"]}}')
+            ]
+        }
+    )
+    analysis = analyze("plane", router)
+    (entry,) = analysis.constraints.unmatched
+    assert len(entry) <= 201
+    assert entry.endswith("…")
+
+
 def test_analyze_prompt_bans_zero_width_windows() -> None:
     router = FakeRouter({"analyst": [reply(VALID)]})
     analyze("Waschmaschine morgens.", router)

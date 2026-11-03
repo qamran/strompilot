@@ -30,6 +30,7 @@ THRESHOLDS: dict[str, float] = {
     "schedule.exact_windows": 1.0,
     "retrieval.top_k_hit": 1.0,
     "redteam.block_rate": 1.0,
+    "judge.groundedness": 1.0,
 }
 
 
@@ -190,6 +191,32 @@ def _run_narration(
     }
 
 
+def _run_judge(case: EvalCase, router: ChatRouter) -> dict[str, Any]:
+    """Run one groundedness case, passing only under the score ceiling."""
+    assert isinstance(case.input, dict)
+    output = case.input.get("output", "")
+    assert isinstance(output, str)
+    ceiling = case.expected.get("max_score", 0)
+    assert isinstance(ceiling, int)
+    try:
+        score, rationale, judge_model = judge_output(router, case, output)
+    except (ValueError, LlmError) as exc:
+        return {
+            "id": case.id,
+            "kind": case.kind,
+            "passed": False,
+            "error": f"judge failed: {exc}",
+        }
+    return {
+        "id": case.id,
+        "kind": case.kind,
+        "passed": score <= ceiling,
+        "judge_score": score,
+        "judge_rationale": rationale,
+        "judge_model": judge_model,
+    }
+
+
 def _run_redteam(case: EvalCase, router: ChatRouter) -> dict[str, Any]:
     """Run one red-team case live with a single raw analyst call."""
     assert isinstance(case.input, str)
@@ -221,6 +248,8 @@ def run_live(
             records.append(_run_narration(case, router, prompts.get("narration")))
         elif case.kind == "redteam":
             records.append(_run_redteam(case, router))
+        elif case.kind == "judge":
+            records.append(_run_judge(case, router))
         else:
             raise ValueError(f"case {case.id} runs offline, not live")
     passed = sum(1 for record in records if record["passed"])

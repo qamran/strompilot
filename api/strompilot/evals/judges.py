@@ -13,7 +13,9 @@ JUDGE_TOKENS = 1200
 _JUDGE_SYSTEM = """You judge one German energy-plan output against its expected
 result. Score 0-5: 5 means every time, price, cost, and device matches
 exactly; 3 means broadly right with small errors; 0 means wrong or
-unsafe. Reply exactly two lines, no more:
+unsafe. Score 0 when the output names times, devices, prices, or
+costs the expected result does not contain: ungrounded extras fail
+even when everything else matches. Reply exactly two lines, no more:
 SCORE: <0-5>
 RATIONALE: <one short line>"""
 

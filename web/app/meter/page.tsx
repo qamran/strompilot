@@ -10,22 +10,27 @@ import {
   uploadMeterPhoto,
 } from "../../lib/api";
 import type { MeterReading } from "../../lib/meter";
+import { formatKwh } from "../../lib/format";
 import { useLang } from "../../lib/i18n";
 import { useSession } from "../../lib/session";
-import ConsentGate from "../../components/ConsentGate";
+import ConsentNote from "../../components/ConsentNote";
 import SignInPrompt from "../../components/SignInPrompt";
 
 export default function MeterPage() {
   const { t, lang } = useLang();
   const { me, loading } = useSession();
+  const agreed = me?.consent_agreed === true;
   const [readings, setReadings] = useState<MeterReading[]>([]);
   const [file, setFile] = useState<File | null>(null);
-  const [consented, setConsented] = useState(false);
   const [keepPhoto, setKeepPhoto] = useState(false);
   const [corrected, setCorrected] = useState("");
   const [note, setNote] = useState("");
   const [error, setError] = useState("");
   const [uploadKey, setUploadKey] = useState(0);
+  const statusLabel: Record<string, string> = {
+    proposed: t.meterProposed,
+    confirmed: t.meterConfirmed,
+  };
 
   async function load() {
     try {
@@ -45,7 +50,7 @@ export default function MeterPage() {
   }, [loading, me]);
 
   async function upload() {
-    if (!file || !consented) return;
+    if (!file || !agreed) return;
     try {
       await uploadMeterPhoto(file, keepPhoto);
       setFile(null);
@@ -78,44 +83,31 @@ export default function MeterPage() {
   return (
     <>
       <section className="panel">
-        <h2>{t.navMeter}</h2>
-        <ConsentGate
-          text={t.consentPhoto}
-          storageKey="photo"
-          onChange={setConsented}
-        >
-          {() => (
-            <>
-              <input
-                key={uploadKey}
-                type="file"
-                accept="image/jpeg,image/png,image/webp,image/gif"
-                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-              />
-              <label>
-                <input
-                  type="checkbox"
-                  checked={keepPhoto}
-                  onChange={(e) => setKeepPhoto(e.target.checked)}
-                />{" "}
-                {t.keepPhoto}
-              </label>
-              <button
-                type="button"
-                disabled={!file || !consented}
-                onClick={upload}
-              >
-                {t.upload}
-              </button>
-            </>
-          )}
-        </ConsentGate>
+        <h2>{t.meterUpload}</h2>
+        <ConsentNote />
+        <input
+          key={uploadKey}
+          type="file"
+          accept="image/jpeg,image/png,image/webp,image/gif"
+          onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+        />
+        <label>
+          <input
+            type="checkbox"
+            checked={keepPhoto}
+            onChange={(e) => setKeepPhoto(e.target.checked)}
+          />{" "}
+          {t.keepPhoto}
+        </label>
+        <button type="button" disabled={!file || !agreed} onClick={upload}>
+          {t.upload}
+        </button>
         {error && <p className="error">{error}</p>}
         {note && <p className="muted">{note}</p>}
       </section>
 
       <section className="panel">
-        <h2>{t.navMeter}</h2>
+        <h2>{t.meterReadings}</h2>
         <input
           value={corrected}
           onChange={(e) => setCorrected(e.target.value)}
@@ -135,13 +127,17 @@ export default function MeterPage() {
                 />
               )}
               <span className="tabular">
-                #{reading.id} · {reading.value_kwh} kWh · {reading.status} ·
-                SAM{" "}
+                #{reading.id} · {formatKwh(reading.value_kwh, lang)} ·{" "}
+                {statusLabel[reading.status] ?? reading.status} · SAM{" "}
                 {reading.sam_box ? t.meterDisplayFound : t.meterFullPhoto} ·{" "}
                 {t.meterNumber} {reading.serial ?? "–"}
               </span>
               {reading.status !== "confirmed" && (
-                <button type="button" onClick={() => confirm(reading.id)}>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => confirm(reading.id)}
+                >
                   {t.confirm}
                 </button>
               )}

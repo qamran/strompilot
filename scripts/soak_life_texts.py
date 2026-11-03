@@ -291,7 +291,9 @@ def _run_one(
         verdict = values.get("verdict") or {}
         record["critic_notes"] = len(verdict.get("notes", []))
         if record["published"]:
-            record["outcome"] = "published"
+            record["outcome"] = (
+                "published-empty" if record["slots"] == 0 else "published"
+            )
         elif values.get("error"):
             record["outcome"] = "blocked"
         elif not paused:
@@ -376,6 +378,7 @@ def main() -> int:
             name: sum(1 for r in records if r["outcome"] == name)
             for name in (
                 "published",
+                "published-empty",
                 "blocked",
                 "no-plan",
                 "stalled",

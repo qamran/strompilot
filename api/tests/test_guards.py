@@ -56,3 +56,8 @@ def test_audit_event_names_node_and_detail() -> None:
     assert "critic" in event
     assert "veto: missing citation" in event
     assert len(event) > len("critic: veto: missing citation")
+
+
+def test_audit_event_names_model_when_given() -> None:
+    event = audit_event("critic", "approved", "muse-wonder-1.0")
+    assert "critic · muse-wonder-1.0: approved" in event

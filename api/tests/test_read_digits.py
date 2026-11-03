@@ -69,3 +69,10 @@ def test_model_error_passes_through() -> None:
     router = FakeRouter({"analyst": [LlmError("spark down")]})
     with pytest.raises(LlmError, match="spark down"):
         read_digits("aGk=", "image/png", router)
+
+
+def test_digit_budget_clears_vision_reasoning() -> None:
+    """Spark vision reasons ~1k tokens over a photo before answering."""
+    router = FakeRouter({"analyst": [reply('{"value_kwh": 1.0, "confidence": "low"}')]})
+    read_digits("aGk=", "image/png", router)
+    assert router.budgets == [4000]

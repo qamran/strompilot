@@ -1,5 +1,6 @@
 """Price service: fresh cache, live sources, stale cache, then sample."""
 
+import logging
 from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -8,6 +9,8 @@ from strompilot.prices import awattar, smard
 from strompilot.prices.cache import DiskCache
 from strompilot.prices.models import BERLIN, PricePoint, PriceSeries
 from strompilot.prices.sample import sample_series
+
+logger = logging.getLogger(__name__)
 
 AWATTAR_ATTRIBUTION = "EPEX Spot day-ahead prices via aWATTar"
 SMARD_ATTRIBUTION = "Bundesnetzagentur | SMARD.de (CC BY 4.0)"
@@ -35,15 +38,18 @@ def get_day_ahead_prices(
         ("awattar", live_awattar, AWATTAR_ATTRIBUTION),
         ("smard", live_smard, SMARD_ATTRIBUTION),
     ):
-        if cache.last_fetch(name) == today:
+        if cache.last_fetch(name, target) == today:
             continue
         try:
             points = fetcher(target)
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "live fetch failed for %s %s: %s", name, target.isoformat(), exc
+            )
             continue
         if not points:
             continue
-        cache.mark_fetched(name, today)
+        cache.mark_fetched(name, target, today)
         series = PriceSeries(
             date=target,
             source=f"{name}-live",

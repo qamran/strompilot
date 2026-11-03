@@ -49,7 +49,7 @@ def test_veto_loops_once_then_publishes() -> None:
     router = FakeRouter(
         {
             "supervisor": [reply("plan")],
-            "analyst": [reply(ANALYST_JSON)],
+            "analyst": [reply(ANALYST_JSON), reply(ANALYST_JSON)],
             "explainer": [
                 reply(CLEAN_NARRATION, SPARK_OPEN_MODEL),
                 reply(CLEAN_NARRATION, SPARK_OPEN_MODEL),
@@ -63,13 +63,34 @@ def test_veto_loops_once_then_publishes() -> None:
     assert final["iterations"] == 2
     scheduled = [event for event in final["audit"] if "scheduler" in event]
     assert len(scheduled) == 2
+    analyst_prompts = [
+        prompt
+        for call, prompt in zip(router.calls, router.prompts)
+        if call == "analyst"
+    ]
+    assert len(analyst_prompts) == 2
+    assert "beleg fehlt" in analyst_prompts[1]
+
+
+def test_empty_extraction_blocks_instead_of_publishing() -> None:
+    router = FakeRouter(
+        {
+            "supervisor": [reply("plan")],
+            "analyst": [reply('{"facts": [], "devices": [], "notes": ""}')],
+        }
+    )
+    graph = build_graph(router, stub_loader)
+    final = graph.invoke({"request": "Plan my day", "approval": "approved"})
+    assert final.get("published") is not True
+    assert "nothing to schedule" in (final.get("error") or "")
+    assert router.calls == ["supervisor", "analyst"]
 
 
 def test_review_cap_ends_with_error() -> None:
     router = FakeRouter(
         {
             "supervisor": [reply("plan")],
-            "analyst": [reply(ANALYST_JSON)],
+            "analyst": [reply(ANALYST_JSON)] * 3,
             "explainer": [reply(CLEAN_NARRATION, SPARK_OPEN_MODEL)] * 3,
             "critic": [reply(VETO, WONDER_MODEL)] * 3,
         }

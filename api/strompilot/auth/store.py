@@ -7,6 +7,9 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import ClassVar
+
+from strompilot.db import connect
 
 from .models import AuthError, Session
 
@@ -15,7 +18,8 @@ CREATE TABLE IF NOT EXISTS auth_tokens (
     token_hash TEXT PRIMARY KEY,
     email TEXT NOT NULL,
     expires_at TEXT NOT NULL,
-    used_at TEXT
+    used_at TEXT,
+    consent_agreed INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS auth_sessions (
     token_hash TEXT PRIMARY KEY,
@@ -38,11 +42,23 @@ def _digest(raw: str) -> str:
 class AuthStore:
     """Magic-link tokens and sessions in the household database."""
 
+    _SCHEMA_READY: ClassVar[set[Path]] = set()
+
     def __init__(self, path: Path) -> None:
         self._path = path
         path.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(path) as conn:
-            conn.executescript(_SCHEMA)
+        if path not in AuthStore._SCHEMA_READY:
+            with connect(path) as conn:
+                conn.executescript(_SCHEMA)
+                columns = {
+                    row[1] for row in conn.execute("PRAGMA table_info(auth_tokens)")
+                }
+                if "consent_agreed" not in columns:
+                    conn.execute(
+                        "ALTER TABLE auth_tokens ADD COLUMN consent_agreed"
+                        " INTEGER NOT NULL DEFAULT 0"
+                    )
+            AuthStore._SCHEMA_READY.add(path)
 
     @staticmethod
     def household_for_email(email: str) -> str:
@@ -56,14 +72,19 @@ class AuthStore:
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
         """Yield one committed-plus-closed connection per operation."""
-        conn = sqlite3.connect(self._path)
+        conn = connect(self._path)
         try:
             with conn:
                 yield conn
         finally:
             conn.close()
 
-    def issue_token(self, email: str, ttl: timedelta = DEFAULT_TOKEN_TTL) -> str:
+    def issue_token(
+        self,
+        email: str,
+        ttl: timedelta = DEFAULT_TOKEN_TTL,
+        consent_agreed: bool = False,
+    ) -> str:
         """Create one single-use magic token, returning the raw value once."""
         normalized = email.strip().lower()
         if not normalized:
@@ -72,27 +93,40 @@ class AuthStore:
         expires = datetime.now(UTC) + ttl
         with self._connect() as conn:
             conn.execute(
-                "INSERT INTO auth_tokens (token_hash, email, expires_at, used_at)"
-                " VALUES (?, ?, ?, NULL)",
-                (_digest(raw), normalized, expires.isoformat()),
+                "INSERT INTO auth_tokens"
+                " (token_hash, email, expires_at, used_at, consent_agreed)"
+                " VALUES (?, ?, ?, NULL, ?)",
+                (_digest(raw), normalized, expires.isoformat(), int(consent_agreed)),
             )
         return raw
+
+    def read_token_consent(self, raw: str) -> bool:
+        """Report whether one token carries sign-in consent."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT consent_agreed FROM auth_tokens WHERE token_hash = ?",
+                (_digest(raw),),
+            ).fetchone()
+        return row is not None and row[0] == 1
 
     def consume_token(self, raw: str) -> str:
         """Redeem one magic token for its email, failing on reuse or expiry."""
         now = datetime.now(UTC).isoformat()
+        digest = _digest(raw)
         with self._connect() as conn:
-            row = conn.execute(
-                "SELECT email, expires_at, used_at FROM auth_tokens"
-                " WHERE token_hash = ?",
-                (_digest(raw),),
-            ).fetchone()
-            if row is None or row[2] is not None or row[1] <= now:
-                raise AuthError("magic link is invalid or expired")
-            conn.execute(
-                "UPDATE auth_tokens SET used_at = ? WHERE token_hash = ?",
-                (now, _digest(raw)),
+            cursor = conn.execute(
+                "UPDATE auth_tokens SET used_at = ?"
+                " WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?",
+                (now, digest, now),
             )
+            if cursor.rowcount != 1:
+                raise AuthError("magic link is invalid or expired")
+            row = conn.execute(
+                "SELECT email FROM auth_tokens WHERE token_hash = ?",
+                (digest,),
+            ).fetchone()
+        if row is None:
+            raise AuthError("magic link is invalid or expired")
         email = row[0]
         assert isinstance(email, str)
         return email
@@ -138,6 +172,26 @@ class AuthStore:
             household_id=household_id,
             expires_at=datetime.fromisoformat(expires_at),
         )
+
+    def forget_household(self, household_id: str) -> None:
+        """Delete one household's sessions plus its magic-link tokens."""
+        household_id = household_id.strip()
+        if not household_id:
+            raise AuthError("household_id must not be blank")
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM auth_sessions WHERE household_id = ?",
+                (household_id,),
+            )
+            emails = [
+                row[0] for row in conn.execute("SELECT DISTINCT email FROM auth_tokens")
+            ]
+            for email in emails:
+                if self.household_for_email(str(email)) == household_id:
+                    conn.execute(
+                        "DELETE FROM auth_tokens WHERE email = ?",
+                        (email,),
+                    )
 
     def revoke_session(self, raw: str) -> bool:
         """Revoke one session, reporting whether it existed and was live."""

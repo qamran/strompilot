@@ -27,6 +27,18 @@ describe("plan mirrors", () => {
       total_cost_eur: 0.6,
       error: null,
       audit: ["a b: c"],
+      plan_day: "2026-06-01",
+      price_source: "awattar-live",
+      price_stale: false,
+      attribution: { schedule: "deterministic", verdict: "muse-wonder-1.0" },
+      prices: [
+        {
+          hour: 2,
+          price_ct_kwh: 15.0,
+          source: "test",
+          start_utc: "2026-06-01T00:00:00+00:00",
+        },
+      ],
     };
     expect(parsePlanDetail(payload)).toEqual(payload);
     expect(

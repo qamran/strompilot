@@ -4,6 +4,11 @@ export interface DayAheadPricePoint {
   start: string;
   end: string;
   eur_per_mwh: number;
+  all_in_ct_kwh?: number;
+}
+
+export function allInCt(point: DayAheadPricePoint): number {
+  return point.all_in_ct_kwh ?? point.eur_per_mwh / 10;
 }
 
 export interface DayAheadPriceSeries {
@@ -31,6 +36,10 @@ function parsePoint(value: unknown): DayAheadPricePoint {
     start: record.start,
     end: record.end,
     eur_per_mwh: record.eur_per_mwh,
+    all_in_ct_kwh:
+      typeof record.all_in_ct_kwh === "number"
+        ? record.all_in_ct_kwh
+        : undefined,
   };
 }
 

@@ -24,6 +24,7 @@ class PriceBarState(TypedDict):
     hour: int
     price_ct_kwh: float
     source: str
+    start_utc: NotRequired[str | None]
 
 
 class CitationState(TypedDict):
@@ -53,6 +54,7 @@ class PlanState(TypedDict, total=False):
     constraints: dict[str, Any]
     prices: list[PriceBarState]
     price_source: str
+    price_stale: bool
     schedule: list[Slot]
     unscheduled: list[str]
     total_cost_eur: float
@@ -63,6 +65,7 @@ class PlanState(TypedDict, total=False):
     iterations: int
     approval: Approval
     published: bool
+    dispatched: bool
     error: str | None
     attribution: dict[str, str]
     audit: Annotated[list[str], operator.add]

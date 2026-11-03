@@ -8,13 +8,14 @@ import {
   fetchPreferences,
   forgetPreference,
 } from "../lib/api";
-import { collapseEpisodes } from "../lib/memory";
+import { collapseEpisodes, formatEpisodeText } from "../lib/memory";
 import type { MemoryEpisode, PreferencesMap } from "../lib/memory";
+import { formatDeviceName } from "../lib/format";
 import { useLang } from "../lib/i18n";
 import { useSession } from "../lib/session";
 
 export default function MemorySidebar() {
-  const { t } = useLang();
+  const { t, lang } = useLang();
   const { me, loading } = useSession();
   const verdictLabel: Record<string, string> = {
     good: t.feedbackGood,
@@ -23,10 +24,7 @@ export default function MemorySidebar() {
   };
 
   function episodeText(text: string): string {
-    const cut = text.lastIndexOf(": ");
-    if (cut < 0) return text;
-    const label = verdictLabel[text.slice(cut + 2).trim()];
-    return label ? `${text.slice(0, cut)}: ${label}` : text;
+    return formatEpisodeText(text, lang, verdictLabel);
   }
 
   const prefLabel: Record<string, string> = {
@@ -58,7 +56,14 @@ export default function MemorySidebar() {
         return `${range.start} – ${range.end}`;
       }
     }
-    if (Array.isArray(value)) return value.map(String).join(", ");
+    if (Array.isArray(value)) {
+      const items = value.map(String);
+      const shown =
+        key === "devices"
+          ? items.map((name) => formatDeviceName(name, lang))
+          : items;
+      return shown.join(", ");
+    }
     return JSON.stringify(value) ?? "";
   }
   const [prefs, setPrefs] = useState<PreferencesMap>({
@@ -96,7 +101,7 @@ export default function MemorySidebar() {
 
   const keys = me
     ? Object.keys(prefs.preferences).filter(
-        (key) => !isEmpty(prefs.preferences[key]),
+        (key) => key !== "consent" && !isEmpty(prefs.preferences[key]),
       )
     : [];
   const shownEpisodes = me ? episodes : [];
@@ -112,10 +117,10 @@ export default function MemorySidebar() {
         {keys.map((key) => (
           <li key={key} className="memory-row">
             <span>
-              <code>{prefLabel[key] ?? key}</code>:{" "}
+              <strong>{prefLabel[key] ?? key}</strong>:{" "}
               {prefText(key, prefs.preferences[key])}
             </span>
-            <button type="button" onClick={() => forget(key)}>
+            <button type="button" className="ghost" onClick={() => forget(key)}>
               {t.forget}
             </button>
           </li>

@@ -23,7 +23,7 @@ recent alerts.""",
 }
 
 _EXAMPLE_USER = """Kind: cheap_window. Day: 2026-06-01. Window: 02:00-04:00.
-Average: 8.50 ct/kWh. Daily mean: 25.00 ct/kWh. Extreme: 8.00 ct/kWh.
+Average: 31.45 ct/kWh. Daily mean: 51.09 ct/kWh. Extreme: 30.86 ct/kWh.
 Devices: E-Auto. Recent alerts: none."""
 _EXAMPLE_REPLY = {
     "de": '{"fire": true, "reason": "Nachtstrom kostet nur einen Bruchteil"}',

@@ -4,6 +4,7 @@ export interface SessionInfo {
   email: string;
   household_id: string;
   expires_at: string;
+  consent_agreed: boolean;
 }
 
 export interface RequestLinkReceipt {
@@ -25,7 +26,8 @@ export function parseSessionResponse(value: unknown): SessionInfo {
   if (
     typeof record.email !== "string" ||
     typeof record.household_id !== "string" ||
-    typeof record.expires_at !== "string"
+    typeof record.expires_at !== "string" ||
+    typeof record.consent_agreed !== "boolean"
   ) {
     throw new Error("SessionResponse has invalid fields");
   }
@@ -33,6 +35,7 @@ export function parseSessionResponse(value: unknown): SessionInfo {
     email: record.email,
     household_id: record.household_id,
     expires_at: record.expires_at,
+    consent_agreed: record.consent_agreed,
   };
 }
 

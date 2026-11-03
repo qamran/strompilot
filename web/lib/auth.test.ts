@@ -12,11 +12,13 @@ describe("auth parsers", () => {
         email: "lena@example.de",
         household_id: "hh_abc",
         expires_at: "2026-12-01T00:00:00+00:00",
+        consent_agreed: true,
       }),
     ).toEqual({
       email: "lena@example.de",
       household_id: "hh_abc",
       expires_at: "2026-12-01T00:00:00+00:00",
+      consent_agreed: true,
     });
   });
 

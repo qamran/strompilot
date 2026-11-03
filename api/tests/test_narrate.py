@@ -84,6 +84,44 @@ def test_check_faithfulness_passes_clean_text() -> None:
     assert check_faithfulness(CLEAN, [SLOT], 0.60) == []
 
 
+def test_check_faithfulness_accepts_window_times() -> None:
+    text = (
+        "Die Waschmaschine läuft von 02:00 bis 04:00, billigste Stunden "
+        "zwischen 00:00 und 23:00, für 0,60 €."
+    )
+    assert check_faithfulness(text, [SLOT], 0.60, windows=[("00:00", "23:00")]) == []
+
+
+def test_narrate_brief_carries_household_facts() -> None:
+    router = FakeRouter({"explainer": [reply(CLEAN, SPARK_OPEN_MODEL)]})
+    narrate(
+        [SLOT],
+        0.60,
+        CONSTRAINTS,
+        [],
+        "awattar-live",
+        router,
+        facts=["baby sleeps from 8pm"],
+    )
+    assert "baby sleeps from 8pm" in router.prompts[0]
+
+
+def test_narrate_prompt_demands_because_clause() -> None:
+    router = FakeRouter({"explainer": [reply(CLEAN, SPARK_OPEN_MODEL)]})
+    narrate([SLOT], 0.60, CONSTRAINTS, [], "awattar-live", router, lang="en")
+    assert "because you said" in router.messages[0][0].content
+
+
+def test_narrate_accepts_window_times_in_draft() -> None:
+    draft = (
+        "Die Waschmaschine läuft von 02:00 bis 04:00, billigste Stunden "
+        "zwischen 00:00 und 23:00, Gesamtkosten 0,60 €."
+    )
+    router = FakeRouter({"explainer": [reply(draft, SPARK_OPEN_MODEL)]})
+    narration, _ = narrate([SLOT], 0.60, CONSTRAINTS, [], "awattar-live", router)
+    assert narration.violations == []
+
+
 def test_check_faithfulness_flags_unknown_time() -> None:
     text = "Die Waschmaschine läuft von 09:00 bis 10:00 Uhr."
     violations = check_faithfulness(text, [SLOT], 0.60)

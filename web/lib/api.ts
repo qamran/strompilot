@@ -1,5 +1,6 @@
 /** Typed fetch client for the Strompilot backend. */
 
+import { parseAskAnswer, type AskAnswer } from "./ask";
 import { parseHealthResponse, type HealthResponse } from "./contract";
 import { parseAlertsResponse, parseWatchReport } from "./flexalarm";
 import type { Alert, WatchReport } from "./flexalarm";
@@ -68,15 +69,41 @@ export function isAuthError(error: unknown): boolean {
   );
 }
 
+const FETCH_TIMEOUT_MS = 15_000;
+const UPLOAD_TIMEOUT_MS = 180_000;
+
+async function timedFetch(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: init.signal ?? controller.signal,
+    });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new Error("API timeout: the server took too long, please retry");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function request<T>(
   path: string,
   parse: (value: unknown) => T,
   init?: RequestInit,
 ): Promise<T> {
-  const res = await fetch(`${API_URL}${path}`, {
-    credentials: "include",
-    ...init,
-  });
+  const res = await timedFetch(
+    `${API_URL}${path}`,
+    { credentials: "include", ...init },
+    FETCH_TIMEOUT_MS,
+  );
   if (!res.ok) {
     const detail = await res.text();
     throw new Error(`API ${res.status}: ${detail.slice(0, 200)}`);
@@ -90,11 +117,14 @@ function household(query = "", lang?: Lang): string {
   return lang ? `${base}&lang=${lang}` : base;
 }
 
-export function requestLink(email: string): Promise<RequestLinkReceipt> {
+export function requestLink(
+  email: string,
+  consent = false,
+): Promise<RequestLinkReceipt> {
   return request("/auth/request-link", parseRequestLinkResponse, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email }),
+    body: JSON.stringify({ email, consent }),
   });
 }
 
@@ -110,10 +140,11 @@ export function fetchMe(): Promise<SessionInfo> {
 }
 
 export async function signOut(): Promise<void> {
-  const res = await fetch(`${API_URL}/auth/sign-out`, {
-    method: "POST",
-    credentials: "include",
-  });
+  const res = await timedFetch(
+    `${API_URL}/auth/sign-out`,
+    { method: "POST", credentials: "include" },
+    FETCH_TIMEOUT_MS,
+  );
   if (!res.ok) {
     throw new Error(`API ${res.status}: ${(await res.text()).slice(0, 200)}`);
   }
@@ -170,9 +201,10 @@ export async function measureRoof(
   const form = new FormData();
   form.append("file", file);
   const width = widthM !== undefined ? `&roof_width_m=${widthM}` : "";
-  const res = await fetch(
+  const res = await timedFetch(
     `${API_URL}${household("/solar/measure", lang)}${width}`,
     { method: "POST", body: form, credentials: "include" },
+    UPLOAD_TIMEOUT_MS,
   );
   if (!res.ok) {
     throw new Error(`API ${res.status}: ${(await res.text()).slice(0, 200)}`);
@@ -187,9 +219,10 @@ export async function previewStyle(
 ): Promise<PreviewResponse> {
   const form = new FormData();
   form.append("file", file);
-  const res = await fetch(
+  const res = await timedFetch(
     `${API_URL}${household("/solar/preview", lang)}&style=${encodeURIComponent(style)}`,
     { method: "POST", body: form, credentials: "include" },
+    UPLOAD_TIMEOUT_MS,
   );
   if (!res.ok) {
     throw new Error(`API ${res.status}: ${(await res.text()).slice(0, 200)}`);
@@ -223,6 +256,13 @@ export function decideApproval(
   );
 }
 
+export function askWhy(question: string, lang: Lang): Promise<AskAnswer> {
+  return request(
+    household(`/ask?q=${encodeURIComponent(question)}`, lang),
+    parseAskAnswer,
+  );
+}
+
 export function fetchAlerts(): Promise<Alert[]> {
   return request(household("/flexalarm/alerts"), (value) => {
     const parsed = parseAlertsResponse(value);
@@ -245,9 +285,10 @@ export async function uploadMeterPhoto(
 ): Promise<MeterReading> {
   const form = new FormData();
   form.append("file", file);
-  const res = await fetch(
+  const res = await timedFetch(
     `${API_URL}${household("/meter/readings")}&keep_photo=${keepPhoto}`,
     { method: "POST", body: form, credentials: "include" },
+    UPLOAD_TIMEOUT_MS,
   );
   if (!res.ok) {
     throw new Error(`API ${res.status}: ${(await res.text()).slice(0, 200)}`);
@@ -311,7 +352,7 @@ export function fetchPreferences(): Promise<PreferencesMap> {
 }
 
 export async function savePreference(key: string, value: unknown): Promise<void> {
-  const res = await fetch(
+  const res = await timedFetch(
     `${API_URL}${household(`/memory/preferences/${encodeURIComponent(key)}`)}`,
     {
       method: "PUT",
@@ -319,6 +360,7 @@ export async function savePreference(key: string, value: unknown): Promise<void>
       body: JSON.stringify({ value }),
       credentials: "include",
     },
+    FETCH_TIMEOUT_MS,
   );
   if (!res.ok) {
     throw new Error(`API ${res.status}: ${(await res.text()).slice(0, 200)}`);
@@ -326,9 +368,10 @@ export async function savePreference(key: string, value: unknown): Promise<void>
 }
 
 export async function forgetPreference(key: string): Promise<void> {
-  const res = await fetch(
+  const res = await timedFetch(
     `${API_URL}${household(`/memory/preferences/${encodeURIComponent(key)}`)}`,
     { method: "DELETE", credentials: "include" },
+    FETCH_TIMEOUT_MS,
   );
   if (!res.ok) {
     throw new Error(`API ${res.status}: ${(await res.text()).slice(0, 200)}`);
@@ -340,9 +383,10 @@ export function fetchHistory(): Promise<EpisodesList> {
 }
 
 export async function deleteEpisode(episodeId: number): Promise<void> {
-  const res = await fetch(
+  const res = await timedFetch(
     `${API_URL}${household(`/memory/history/${episodeId}`)}`,
     { method: "DELETE", credentials: "include" },
+    FETCH_TIMEOUT_MS,
   );
   if (!res.ok) {
     throw new Error(`API ${res.status}: ${(await res.text()).slice(0, 200)}`);
@@ -350,10 +394,11 @@ export async function deleteEpisode(episodeId: number): Promise<void> {
 }
 
 export async function forgetHousehold(): Promise<void> {
-  const res = await fetch(`${API_URL}${household("/memory/household")}`, {
-    method: "DELETE",
-    credentials: "include",
-  });
+  const res = await timedFetch(
+    `${API_URL}${household("/memory/household")}`,
+    { method: "DELETE", credentials: "include" },
+    FETCH_TIMEOUT_MS,
+  );
   if (!res.ok) {
     throw new Error(`API ${res.status}: ${(await res.text()).slice(0, 200)}`);
   }

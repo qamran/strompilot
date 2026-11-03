@@ -12,6 +12,7 @@ class PricePoint(BaseModel):
     start: datetime
     end: datetime
     eur_per_mwh: float
+    all_in_ct_kwh: float | None = None
 
     @property
     def ct_per_kwh(self) -> float:

@@ -14,7 +14,7 @@ import { useSession } from "../../lib/session";
 import SignInPrompt from "../../components/SignInPrompt";
 
 export default function AccountPage() {
-  const { t } = useLang();
+  const { t, lang } = useLang();
   const { me, loading, refresh } = useSession();
   const router = useRouter();
   const [source, setSource] = useState("");
@@ -75,12 +75,18 @@ export default function AccountPage() {
             <span>{me.email}</span>
           </li>
           <li className="memory-row">
-            <span className="muted">{t.accountHousehold}</span>
-            <span>{me.household_id}</span>
-          </li>
-          <li className="memory-row">
             <span className="muted">{t.accountExpiry}</span>
-            <span>{new Date(me.expires_at).toLocaleString()}</span>
+            <span>
+              {new Date(me.expires_at).toLocaleString(
+                lang === "de" ? "de-DE" : "en-GB",
+                {
+                  day: "numeric",
+                  month: "short",
+                  hour: "2-digit",
+                  minute: "2-digit",
+                },
+              )}
+            </span>
           </li>
         </ul>
         <div className="form-row">

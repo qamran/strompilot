@@ -42,6 +42,17 @@ def test_feedback_stored_and_shifts_prefs(feedback_setup: TestClient) -> None:
     }
 
 
+def test_identical_feedback_writes_once(feedback_setup: TestClient) -> None:
+    body = {"device": "E-Auto", "verdict": "good"}
+    first = feedback_setup.post("/feedback?household_id=h1", json=body)
+    second = feedback_setup.post("/feedback?household_id=h1", json=body)
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["episode"]["id"] == second.json()["episode"]["id"]
+    listed = feedback_setup.get("/feedback?household_id=h1").json()["feedback"]
+    assert len(listed) == 1
+
+
 def test_feedback_lists_per_household(feedback_setup: TestClient) -> None:
     feedback_setup.post(
         "/feedback?household_id=h1",
@@ -51,6 +62,14 @@ def test_feedback_lists_per_household(feedback_setup: TestClient) -> None:
     assert listed.status_code == 200
     assert [episode["kind"] for episode in listed.json()["feedback"]] == ["feedback"]
     assert feedback_setup.get("/feedback?household_id=h2").status_code == 403
+
+
+def test_oversize_note_rejected(feedback_setup: TestClient) -> None:
+    response = feedback_setup.post(
+        "/feedback?household_id=h1",
+        json={"device": "Waschmaschine", "verdict": "good", "note": "x" * 2001},
+    )
+    assert response.status_code == 422
 
 
 def test_bad_verdict_rejected(feedback_setup: TestClient) -> None:

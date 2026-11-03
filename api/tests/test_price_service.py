@@ -3,6 +3,8 @@
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
+import pytest
+
 from strompilot.prices.cache import DiskCache
 from strompilot.prices.models import PricePoint, PriceSeries
 from strompilot.prices.service import get_day_ahead_prices
@@ -116,9 +118,9 @@ def test_sample_is_last_resort_and_labeled(tmp_path: Path) -> None:
     assert "Sample" in series.attribution
 
 
-def test_guard_skips_source_fetched_today(tmp_path: Path) -> None:
+def test_guard_skips_same_source_and_day(tmp_path: Path) -> None:
     cache = DiskCache(tmp_path)
-    cache.mark_fetched("awattar", NOW.date())
+    cache.mark_fetched("awattar", TARGET, NOW.date())
     calls: list[str] = []
 
     def fail_awattar(target: date) -> list[PricePoint]:
@@ -134,6 +136,38 @@ def test_guard_skips_source_fetched_today(tmp_path: Path) -> None:
     assert calls == ["smard"]
 
 
+def test_guard_is_per_source_and_day(tmp_path: Path) -> None:
+    cache = DiskCache(tmp_path)
+    cache.mark_fetched("awattar", TARGET, NOW.date())
+    calls: list[date] = []
+
+    def fake_awattar(target: date) -> list[PricePoint]:
+        calls.append(target)
+        return make_points(200.0)
+
+    def fail_smard(target: date) -> list[PricePoint]:
+        raise AssertionError("awattar must serve the other day")
+
+    other = date(2026, 10, 30)
+    series = get_day_ahead_prices(other, tmp_path, NOW, fake_awattar, fail_smard)
+    assert series.source == "awattar-live"
+    assert calls == [other]
+
+
+def test_fetch_failure_logs_a_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    def fail_awattar(target: date) -> list[PricePoint]:
+        raise ConnectionError("awattar down")
+
+    def fake_smard(target: date) -> list[PricePoint]:
+        return make_points(180.0)
+
+    with caplog.at_level("WARNING", logger="strompilot.prices.service"):
+        get_day_ahead_prices(TARGET, tmp_path, NOW, fail_awattar, fake_smard)
+    assert any("awattar" in message for message in caplog.messages)
+
+
 def test_empty_live_result_falls_through_without_burning_guard(
     tmp_path: Path,
 ) -> None:
@@ -145,7 +179,7 @@ def test_empty_live_result_falls_through_without_burning_guard(
 
     series = get_day_ahead_prices(TARGET, tmp_path, NOW, empty_awattar, fake_smard)
     assert series.source == "smard-live"
-    assert DiskCache(tmp_path).last_fetch("awattar") is None
+    assert DiskCache(tmp_path).last_fetch("awattar", TARGET) is None
 
 
 def test_corrupt_cache_file_falls_back_to_sample(tmp_path: Path) -> None:
@@ -179,7 +213,7 @@ def test_corrupt_fetch_log_is_treated_as_no_marks(tmp_path: Path) -> None:
 
 def test_guard_uses_berlin_day(tmp_path: Path) -> None:
     cache = DiskCache(tmp_path)
-    cache.mark_fetched("awattar", date(2026, 10, 30))
+    cache.mark_fetched("awattar", date(2026, 10, 30), date(2026, 10, 30))
     now = datetime(2026, 10, 29, 23, 30, tzinfo=UTC)
     calls: list[str] = []
 

@@ -1,5 +1,9 @@
 """Tests for the API health endpoint."""
 
+import sqlite3
+from pathlib import Path
+
+import pytest
 from fastapi.testclient import TestClient
 
 from strompilot.main import app
@@ -24,3 +28,38 @@ def test_browser_origin_gets_cors_headers_foreign_origin_does_not() -> None:
     )
     foreign = client.get("/health", headers={"Origin": "https://evil.example"})
     assert "access-control-allow-origin" not in foreign.headers
+
+
+def test_startup_prepares_databases(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Entering the app creates every table once, before any request."""
+    memory_db = tmp_path / "memory.db"
+    threads_db = tmp_path / "threads.db"
+    monkeypatch.setenv("MEMORY_DB", str(memory_db))
+    monkeypatch.setenv("THREADS_DB", str(threads_db))
+    with TestClient(app) as client:
+        assert client.get("/health").status_code == 200
+    with sqlite3.connect(memory_db) as conn:
+        tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+    assert {
+        "preferences",
+        "episodes",
+        "meter_readings",
+        "alerts",
+        "auth_tokens",
+        "auth_sessions",
+    } <= tables
+    with sqlite3.connect(threads_db) as conn:
+        thread_tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+    assert {"runs", "run_errors"} <= thread_tables

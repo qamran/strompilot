@@ -1,5 +1,8 @@
 /** Memory types mirroring api/strompilot/memory/models.py. */
 
+import { formatDeviceName } from "./format";
+import type { Lang } from "./i18n";
+
 export interface PreferencesMap {
   household_id: string;
   preferences: Record<string, unknown>;
@@ -69,15 +72,36 @@ export function collapseEpisodes(
   episodes: MemoryEpisode[],
 ): CollapsedEpisodes[] {
   const rows: CollapsedEpisodes[] = [];
+  const index = new Map<string, CollapsedEpisodes>();
   for (const episode of episodes) {
-    const last = rows[rows.length - 1];
-    if (last && last.episode.text === episode.text) {
-      last.count += 1;
+    const key = `${episode.kind}\n${episode.text}`;
+    const found = index.get(key);
+    if (found) {
+      found.count += 1;
     } else {
-      rows.push({ episode, count: 1 });
+      const row = { episode, count: 1 };
+      rows.push(row);
+      index.set(key, row);
     }
   }
   return rows;
+}
+
+/**
+ * Display text for one episode: feedback rows ("device: verdict") get a
+ * localized device and verdict, free text passes through untouched.
+ */
+export function formatEpisodeText(
+  text: string,
+  lang: Lang,
+  verdicts: Record<string, string>,
+): string {
+  const cut = text.lastIndexOf(": ");
+  if (cut < 0) return text;
+  const label = verdicts[text.slice(cut + 2).trim()];
+  if (!label) return text;
+  const device = formatDeviceName(text.slice(0, cut).trim(), lang);
+  return `${device}: ${label}`;
 }
 
 export function parseEpisodesList(value: unknown): EpisodesList {

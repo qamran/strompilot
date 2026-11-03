@@ -1,11 +1,14 @@
 """Tests for the worker nodes with a scripted router."""
 
+from pathlib import Path
+
 import pytest
 
 from strompilot.agents.state import PlanState, Slot
 from strompilot.agents.workers import (
     analyst_node,
     critic_node,
+    dispatch_node,
     explainer_node,
     perceive_node,
     publish_node,
@@ -15,9 +18,11 @@ from strompilot.lifeplan.errors import LifeplanError
 from strompilot.lifeplan.schemas import HouseholdConstraints
 from strompilot.llm.client import SPARK_MODEL, SPARK_OPEN_MODEL
 from strompilot.llm.types import LlmError
+from strompilot.memory.store import MemoryStore
 from tests.fakes import (
     ANALYST_JSON,
     FakeRouter,
+    FakeWallbox,
     make_device,
     reply,
     stub_loader,
@@ -36,6 +41,13 @@ def test_perceive_marks_other_intent() -> None:
     router = FakeRouter({"supervisor": [reply("other")]})
     update = perceive_node(PlanState(request="erzaehl einen Witz"), router)
     assert update["intent"] == "other"
+
+
+def test_perceive_failure_falls_back_to_other() -> None:
+    router = FakeRouter({"supervisor": [LlmError("Truncated at 2000 tokens")]})
+    update = perceive_node(PlanState(request='{"weird": "json blob"}'), router)
+    assert update["intent"] == "other"
+    assert any("off-topic" in event for event in update["audit"])
 
 
 def test_perceive_quotes_request() -> None:
@@ -80,6 +92,75 @@ def test_analyst_extracts_facts_and_constraints() -> None:
     }
 
 
+def test_analyst_receives_critic_notes_after_veto() -> None:
+    router = FakeRouter({"analyst": [reply(ANALYST_JSON)]})
+    update = analyst_node(
+        PlanState(
+            request="plane",
+            verdict={"approved": False, "notes": ["baby bedtime missing"]},
+        ),
+        router,
+    )
+    assert update["constraints"]["devices"]
+    assert "baby bedtime missing" in router.prompts[0]
+
+
+def test_analyst_receives_household_context(tmp_path: Path) -> None:
+    memory = MemoryStore(tmp_path / "memory.db")
+    memory.set_preference("h1", "devices", ["Waschmaschine", "E-Auto"])
+    memory.set_preference("h1", "quiet_hours", {"start": "22:00", "end": "06:00"})
+    router = FakeRouter({"analyst": [reply(ANALYST_JSON)]})
+    analyst_node(PlanState(request="plane", household_id="h1"), router, memory=memory)
+    assert "Waschmaschine, E-Auto" in router.prompts[0]
+    assert "22:00" in router.prompts[0] and "06:00" in router.prompts[0]
+
+
+def test_analyst_skips_context_without_memory() -> None:
+    router = FakeRouter({"analyst": [reply(ANALYST_JSON)]})
+    analyst_node(PlanState(request="plane", household_id="h1"), router)
+    assert "Household context" not in router.prompts[0]
+
+
+def test_quiet_context_ignores_invalid_clock(tmp_path: Path) -> None:
+    memory = MemoryStore(tmp_path / "memory.db")
+    memory.set_preference("h1", "devices", ["Waschmaschine"])
+    memory.set_preference("h1", "quiet_hours", {"start": "25:00", "end": "06:00"})
+    router = FakeRouter({"analyst": [reply(ANALYST_JSON)]})
+    analyst_node(PlanState(request="plane", household_id="h1"), router, memory=memory)
+    assert "25:00" not in router.prompts[0]
+    assert "Quiet hours" not in router.prompts[0]
+
+
+def test_publish_is_idempotent() -> None:
+    first = publish_node(PlanState(request="x", approval="approved"))
+    assert first.get("published") is True
+    second = publish_node(PlanState(request="x", approval="approved", published=True))
+    assert second.get("published") is None
+    assert any("already published" in event for event in second["audit"])
+
+
+def test_dispatch_skips_when_already_programmed() -> None:
+    driver = FakeWallbox([])
+    update = dispatch_node(
+        PlanState(
+            request="x",
+            plan_day="2026-06-01",
+            dispatched=True,
+            schedule=[
+                Slot(
+                    device="E-Auto",
+                    start="02:00",
+                    end="04:00",
+                    reason="billig",
+                )
+            ],
+        ),
+        wallbox=driver,
+    )
+    assert driver.programs == []
+    assert any("already programmed" in event for event in update["audit"])
+
+
 def test_analyst_error_propagates() -> None:
     router = FakeRouter({"analyst": [reply("nein"), reply("nein")]})
     with pytest.raises(LlmError, match="extraction failed"):
@@ -97,6 +178,7 @@ def test_scheduler_optimizes_deterministically() -> None:
     assert update["total_cost_eur"] == 0.60
     assert update["unscheduled"] == []
     assert update["price_source"] == "test"
+    assert update["price_stale"] is False
     assert len(update["prices"]) == 24
     assert update["attribution"] == {"schedule": "deterministic"}
 
@@ -107,7 +189,7 @@ def test_scheduler_reasons_follow_state_language() -> None:
         PlanState(request="plane", constraints=constraints, lang="en"), stub_loader
     )
     (slot,) = update["schedule"]
-    assert slot["reason"] == "Cheapest hours in the window (Ø 15.00 ct/kWh)"
+    assert slot["reason"] == "Cheapest 2h between 00:00 and 23:00 (Ø 15.00 ct/kWh)"
 
 
 def test_explainer_narrates_in_state_language() -> None:
@@ -250,10 +332,24 @@ def test_explainer_sees_schedule() -> None:
     assert "02:00" in prompt
 
 
-def test_critic_sees_schedule_and_narration() -> None:
+def test_critic_brief_centers_constraints() -> None:
     router = FakeRouter({"critic": [reply('{"approved": true, "notes": []}')]})
     state = PlanState(
         request="plane",
+        constraints={
+            "devices": [
+                {
+                    "device": "Waschmaschine",
+                    "power_kw": 2.0,
+                    "duration_h": 2.0,
+                    "earliest": "06:00",
+                    "latest": "10:00",
+                    "shiftable": True,
+                }
+            ],
+            "notes": "",
+            "unmatched": [],
+        },
         schedule=[
             Slot(
                 device="Waschmaschine",
@@ -266,19 +362,20 @@ def test_critic_sees_schedule_and_narration() -> None:
     )
     critic_node(state, router)
     (prompt,) = router.prompts
-    assert "Waschmaschine" in prompt
-    assert "Wasche nachts." in prompt
+    assert "Constraints:" in prompt
+    assert "06:00" in prompt and "10:00" in prompt
+    assert "Wasche nachts." not in prompt
     assert "<household_text>" in prompt
 
 
-def test_critic_treats_schedule_as_final() -> None:
+def test_critic_ignores_times_and_wording() -> None:
     router = FakeRouter({"critic": [reply('{"approved": true, "notes": []}')]})
     critic_node(PlanState(request="plane", narration="text"), router)
     (prompt,) = router.prompts
-    assert "final" in prompt
+    assert "never veto" in prompt
 
 
-def test_critic_sees_violations_and_gaps() -> None:
+def test_critic_sees_gaps_not_violations() -> None:
     router = FakeRouter({"critic": [reply('{"approved": true, "notes": []}')]})
     state = PlanState(
         request="plane",
@@ -288,7 +385,7 @@ def test_critic_sees_violations_and_gaps() -> None:
     )
     critic_node(state, router)
     (prompt,) = router.prompts
-    assert "09:00" in prompt
+    assert "09:00" not in prompt
     assert "kein Fenster" in prompt
 
 

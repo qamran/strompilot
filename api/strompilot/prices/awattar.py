@@ -8,7 +8,7 @@ import httpx
 from strompilot.prices.models import PricePoint, berlin_day_bounds
 
 BASE_URL = "https://api.awattar.de/v1/marketdata"
-TIMEOUT_SECONDS = 30.0
+TIMEOUT_SECONDS = 5.0
 
 
 def parse_awattar(payload: dict[str, Any], target: date) -> list[PricePoint]:

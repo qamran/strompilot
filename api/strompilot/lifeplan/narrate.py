@@ -1,6 +1,7 @@
 """Cited narration: Baseten drafts, deterministic citations and checks."""
 
 import re
+from collections.abc import Sequence
 
 from strompilot.llm.client import LOW_EFFORT
 from strompilot.llm.types import ChatRouter, Message
@@ -34,7 +35,8 @@ _CT_TOLERANCE = 0.6
 _SYSTEM = {
     "de": """You are Strompilot, a friendly German energy advisor for
 households on dynamic tariffs. Turn the plan bullets into a short German
-household message of 4-8 sentences.
+household message, about two sentences per device plus one for the total.
+Sound warm and specific, like a text from a friend who read the meter.
 Rules:
 - Name every device with its running time in HH:MM format and its cost
 in Euro with 2 decimals.
@@ -43,11 +45,14 @@ in Euro with 2 decimals.
 - State in words why each device runs at its time (cheapest hours or
 fixed household time from the bullet reason); never invent new numbers
 for the reason.
-- Add no times, prices, costs, or devices beyond the bullets.
+- Tie each device's timing to one household fact with
+'weil du gesagt hast, …'.
+- Add no times, prices, costs, or devices beyond the bullets and facts.
 - Reply in German, plain words, no markdown headers.""",
     "en": """You are Strompilot, a friendly energy advisor for
 households on dynamic tariffs. Turn the plan bullets into a short English
-household message of 4-8 sentences.
+household message, about two sentences per device plus one for the total.
+Sound warm and specific, like a text from a friend who read the meter.
 Rules:
 - Name every device with its running time in HH:MM format and its cost
 in Euro with 2 decimals.
@@ -56,29 +61,37 @@ in Euro with 2 decimals.
 - State in words why each device runs at its time (cheapest hours or
 fixed household time from the bullet reason); never invent new numbers
 for the reason.
-- Add no times, prices, costs, or devices beyond the bullets.
+- Tie each device's timing to one household fact with
+'because you said …'.
+- Add no times, prices, costs, or devices beyond the bullets and facts.
 - Reply in English, plain words, no markdown headers.""",
 }
 
 _EXAMPLE_BULLETS = {
     "de": """- Waschmaschine: 02:00 bis 04:00, 4,0 kWh,
 Durchschnitt 15,00 ct/kWh, Kosten 0,60 Euro.
-Gesamtkosten: 0,60 Euro.""",
+Gesamtkosten: 0,60 Euro.
+Haushaltsangaben:
+- du schläfst nach der Nachtschicht tagsüber.""",
     "en": """- Washing machine: 02:00 to 04:00, 4.00 kWh,
 average 15.00 ct/kWh, cost 0.60 Euro.
-Total cost: 0.60 Euro.""",
+Total cost: 0.60 Euro.
+Household facts:
+- you sleep during the day after night shifts.""",
 }
 _EXAMPLE_REPLY = {
     "de": (
         "Gute Nachricht: Die Waschmaschine läuft von 02:00 bis 04:00 Uhr, "
         "wenn der Strom mit 15,00 ct pro kWh am billigsten ist. "
-        "Die 4,0 kWh kosten dich 0,60 Euro. "
+        "Die 4,0 kWh für 0,60 Euro laufen nachts, weil du gesagt hast, "
+        "dass du tagsüber schläfst. "
         "Die Gesamtkosten für morgen betragen 0,60 Euro."
     ),
     "en": (
         "Good news: the washing machine runs from 02:00 to 04:00, "
         "when power is cheapest at 15.00 ct per kWh. "
-        "The 4.00 kWh cost you 0.60 Euro. "
+        "The 4.00 kWh for 0.60 Euro run overnight because you said "
+        "you sleep during the day. "
         "The total cost for tomorrow is 0.60 Euro."
     ),
 }
@@ -95,6 +108,7 @@ def _brief(
     total_cost_eur: float,
     unscheduled: list[str],
     lang: str,
+    facts: Sequence[str] = (),
 ) -> str:
     """Render the deterministic plan bullets for the draft prompt."""
     if lang == "en":
@@ -109,6 +123,9 @@ def _brief(
         lines.append(f"Total cost: {_euro(total_cost_eur, lang)} Euro.")
         for gap in unscheduled:
             lines.append(f"Not schedulable: {gap}.")
+        if facts:
+            lines.append("Household facts:")
+            lines.extend(f"- {fact}" for fact in facts)
         return "\n".join(lines)
     lines = [
         f"- {slot.device}: {slot.start} bis {slot.end}, "
@@ -121,6 +138,9 @@ def _brief(
     lines.append(f"Gesamtkosten: {_euro(total_cost_eur, lang)} Euro.")
     for gap in unscheduled:
         lines.append(f"Nicht planbar: {gap}.")
+    if facts:
+        lines.append("Haushaltsangaben:")
+        lines.extend(f"- {fact}" for fact in facts)
     return "\n".join(lines)
 
 
@@ -203,11 +223,15 @@ def check_faithfulness(
     slots: list[ScheduledSlot],
     total_cost_eur: float,
     lang: str = "de",
+    windows: Sequence[tuple[str, str]] = (),
 ) -> list[str]:
     """List every time, amount, or device the plan does not back."""
     violations: list[str] = []
     backed_minutes = {_to_minutes(*slot.start.split(":")) for slot in slots}
     backed_minutes |= {_to_minutes(*slot.end.split(":")) for slot in slots}
+    for earliest, latest in windows:
+        backed_minutes.add(_to_minutes(*earliest.split(":")))
+        backed_minutes.add(_to_minutes(*latest.split(":")))
     for match in _TIME_RE.finditer(text):
         if _to_minutes(match.group(1), match.group(2)) not in backed_minutes:
             violations.append(f"Uhrzeit {match.group(0)} ohne Planbeleg")
@@ -242,12 +266,14 @@ def narrate(
     unscheduled: list[str],
     price_source: str,
     router: ChatRouter,
+    facts: Sequence[str] = (),
     system_prompt: str | None = None,
     lang: str = "de",
 ) -> tuple[Narration, str]:
     """Draft the narration with one repair retry plus citations."""
     lang = "en" if lang == "en" else "de"
-    brief = _brief(slots, total_cost_eur, unscheduled, lang)
+    brief = _brief(slots, total_cost_eur, unscheduled, lang, facts)
+    windows = [(device.earliest, device.latest) for device in constraints.devices]
     messages = [
         Message(role="system", content=system_prompt or _SYSTEM[lang]),
         Message(role="user", content=_EXAMPLE_BULLETS[lang]),
@@ -255,7 +281,9 @@ def narrate(
         Message(role="user", content=brief),
     ]
     result = router.chat("explainer", messages, NARRATE_TOKENS, LOW_EFFORT)
-    violations = check_faithfulness(result.content, slots, total_cost_eur, lang)
+    violations = check_faithfulness(
+        result.content, slots, total_cost_eur, lang, windows
+    )
     if violations:
         repair = router.chat(
             "explainer",
@@ -272,7 +300,9 @@ def narrate(
             LOW_EFFORT,
         )
         result = repair
-        violations = check_faithfulness(result.content, slots, total_cost_eur, lang)
+        violations = check_faithfulness(
+            result.content, slots, total_cost_eur, lang, windows
+        )
     citations = build_citations(
         slots, total_cost_eur, constraints, unscheduled, price_source, lang
     )

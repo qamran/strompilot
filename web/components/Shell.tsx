@@ -37,7 +37,7 @@ export default function Shell({ children }: { children: ReactNode }) {
 
   return (
     <div className="shell">
-      <Header alarmCount={alarmCount} onPalette={() => setPalette(true)} />
+      <Header alarmCount={alarmCount} />
       <div className="body-row">
         <main className="main">{children}</main>
         <MemorySidebar />

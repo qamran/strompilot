@@ -50,3 +50,29 @@ jobs:
       - name: Production build
         run: npm run build
         working-directory: web
+
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install ./api
+      - name: Install frontend
+        run: npm ci
+        working-directory: web
+      - name: Fail on OpenAPI drift
+        run: |
+          python scripts/dump_openapi.py /tmp/openapi.json
+          npx openapi-typescript /tmp/openapi.json -o lib/openapi.d.ts
+          git diff --exit-code -- lib/openapi.d.ts
+        working-directory: web

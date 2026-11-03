@@ -1,19 +1,24 @@
 """Watcher loop: scan, judge, dedup, hold or deliver."""
 
+import logging
 import os
 from datetime import datetime
 
 from strompilot.llm.types import ChatRouter
 from strompilot.memory.store import MemoryStore
 from strompilot.prices.models import PriceSeries
+from strompilot.tariff.defaults import DEFAULTS
+from strompilot.tariff.engine import decompose
 
 from .compose import compose
-from .models import Alert, WatchReport
+from .models import Alert, AlertCandidate, WatchReport
 from .quiet import is_quiet, parse_quiet_hours
 from .senders import Sender, SendError, senders_for
 from .store import AlertStore, dedup_key
 from .triage import judge
 from .watch import scan_windows
+
+logger = logging.getLogger(__name__)
 
 
 def _devices(memory: MemoryStore, household_id: str) -> list[str]:
@@ -24,6 +29,24 @@ def _devices(memory: MemoryStore, household_id: str) -> list[str]:
     return [str(name) for name in devices]
 
 
+def _all_in(candidate: AlertCandidate) -> AlertCandidate:
+    """Restate one candidate's spot figures as all-in household prices.
+
+    Detection runs on spot relativity inside scan_windows; everything
+    the household reads matches the planner and the monthly report.
+    """
+    return AlertCandidate(
+        kind=candidate.kind,
+        day=candidate.day,
+        start=candidate.start,
+        end=candidate.end,
+        avg_ct_kwh=decompose(candidate.avg_ct_kwh * 10, DEFAULTS).total,
+        mean_ct_kwh=decompose(candidate.mean_ct_kwh * 10, DEFAULTS).total,
+        extreme_ct_kwh=decompose(candidate.extreme_ct_kwh * 10, DEFAULTS).total,
+        hours=candidate.hours,
+    )
+
+
 def _deliver(alert: Alert, senders: list[Sender]) -> tuple[str | None, str | None]:
     """Try each sender in order, returning channel or error."""
     errors: list[str] = []
@@ -31,6 +54,7 @@ def _deliver(alert: Alert, senders: list[Sender]) -> tuple[str | None, str | Non
         try:
             sender.send(alert)
         except SendError as exc:
+            logger.exception("alert %s delivery failed", alert.id)
             errors.append(f"{sender.channel}: {exc}")
             continue
         return sender.channel, None
@@ -67,7 +91,7 @@ def run_once(
     devices = _devices(memory, household_id)
     known = alerts.known_keys(household_id)
     recent = [alert.title for alert in alerts.list_alerts(household_id, limit=5)]
-    candidates = scan_windows(series)
+    candidates = [_all_in(found) for found in scan_windows(series)]
     fired = held = delivered = skipped = duplicates = 0
     errors: list[str] = []
     for candidate in candidates:

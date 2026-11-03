@@ -6,7 +6,9 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
+
+from strompilot.db import connect
 
 from .models import Episode, MemoryError, Preference
 
@@ -46,16 +48,20 @@ def _escape_like(value: str) -> str:
 class MemoryStore:
     """Household-scoped preferences and episodes with forgetting."""
 
+    _SCHEMA_READY: ClassVar[set[Path]] = set()
+
     def __init__(self, path: Path) -> None:
         self._path = path
         path.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(path) as conn:
-            conn.executescript(_SCHEMA)
+        if path not in MemoryStore._SCHEMA_READY:
+            with connect(path) as conn:
+                conn.executescript(_SCHEMA)
+            MemoryStore._SCHEMA_READY.add(path)
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
         """Yield one committed-plus-closed connection per operation."""
-        conn = sqlite3.connect(self._path)
+        conn = connect(self._path)
         try:
             with conn:
                 yield conn

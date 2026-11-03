@@ -114,7 +114,8 @@ def main() -> None:
         reply.raise_for_status()
     print(f"feedback stored for {len(slots)} devices")
 
-    for name in ("meter_clean.png", "meter_obis.png"):
+    ground_truth = {"meter_clean.png": 4217.3, "meter_obis.png": 12893.0}
+    for name, truth in ground_truth.items():
         with (FIXTURES / name).open("rb") as photo:
             uploaded = client.post(
                 f"/meter/readings?household_id={household}&keep_photo=true",
@@ -124,7 +125,7 @@ def main() -> None:
         reading = uploaded.json()
         confirmed = client.post(
             f"/meter/readings/{reading['id']}/confirm?household_id={household}",
-            json={"lang": args.lang},
+            json={"lang": args.lang, "corrected_value_kwh": truth},
         )
         confirmed.raise_for_status()
         print(

@@ -16,6 +16,26 @@ export default function AlarmsPage() {
   const [report, setReport] = useState<WatchReport | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const kindLabel: Record<string, string> = {
+    cheap_window: t.alertCheap,
+    price_spike: t.alertSpike,
+    negative_prices: t.alertNegative,
+  };
+  const statusLabel: Record<string, string> = {
+    delivered: t.alertDelivered,
+    held: t.alertHeld,
+    failed: t.alertFailed,
+  };
+  const channelLabel: Record<string, string> = { log: "Log" };
+
+  function stamp(iso: string): string {
+    return new Date(iso).toLocaleString(lang === "de" ? "de-DE" : "en-GB", {
+      day: "numeric",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }
 
   useEffect(() => {
     if (loading || !me) return;
@@ -53,6 +73,7 @@ export default function AlarmsPage() {
   return (
     <section className="panel">
       <h2>{t.alertsTitle}</h2>
+      <p className="muted">{t.allInNote}</p>
       <button type="button" disabled={busy} onClick={watch}>
         {t.watchNow}
       </button>
@@ -71,17 +92,20 @@ export default function AlarmsPage() {
               className={`alert-dot ${["cheap", "spike", "negative"].includes(alert.kind) ? alert.kind : "info"}`}
               aria-hidden="true"
             />
-            {alert.title} <span className="alert-kind">{alert.kind}</span>
+            {alert.title}{" "}
+            <span className="alert-kind">
+              {kindLabel[alert.kind] ?? alert.kind}
+            </span>
           </h3>
           <p>{alert.body}</p>
           <p className="muted">
-            {alert.status} · {alert.reason} · {alert.created_at}
+            {statusLabel[alert.status] ?? alert.status} · {alert.reason} ·{" "}
+            {stamp(alert.created_at)}
           </p>
           {alert.status === "delivered" && alert.channel && (
             <p className="muted">
-              {t.deliveredVia} {alert.channel}
-              {alert.delivered_at &&
-                ` · ${new Date(alert.delivered_at).toLocaleString()}`}
+              {t.deliveredVia} {channelLabel[alert.channel] ?? alert.channel}
+              {alert.delivered_at && ` · ${stamp(alert.delivered_at)}`}
             </p>
           )}
           {alert.status === "failed" && (

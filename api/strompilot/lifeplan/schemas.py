@@ -40,6 +40,22 @@ class HouseholdConstraints(BaseModel):
     devices: list[DeviceConstraint] = []
     notes: str = ""
     unmatched: list[str] = []
+    max_concurrent_kw: float = Field(default=14.0, gt=0)
+
+    @field_validator("unmatched", mode="before")
+    @classmethod
+    def _cap_unmatched(cls, value: object) -> object:
+        """Cap unmatched asks so one sentence cannot flood the plan."""
+        if not isinstance(value, list):
+            return value
+        capped: list[object] = []
+        for item in value:
+            if isinstance(item, str):
+                cleaned = item.strip()
+                capped.append(cleaned if len(cleaned) <= 200 else cleaned[:200] + "…")
+            else:
+                capped.append(item)
+        return capped
 
 
 class PriceBar(BaseModel):
@@ -48,6 +64,7 @@ class PriceBar(BaseModel):
     hour: int = Field(ge=0, le=23)
     price_ct_kwh: float
     source: str = Field(min_length=1)
+    start_utc: str | None = None
 
 
 class ScheduledSlot(BaseModel):

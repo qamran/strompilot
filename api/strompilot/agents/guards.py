@@ -49,7 +49,8 @@ def approval_granted(approval: str) -> bool:
     return approval == "approved"
 
 
-def audit_event(node: str, detail: str) -> str:
+def audit_event(node: str, detail: str, model: str | None = None) -> str:
     """Build one timestamped audit line for a node transition."""
-    stamp = datetime.now(UTC).isoformat(timespec="seconds")
-    return f"{stamp} {node}: {detail}"
+    stamp = datetime.now(UTC).isoformat(timespec="milliseconds")
+    actor = f" · {model}" if model else ""
+    return f"{stamp} {node}{actor}: {detail}"

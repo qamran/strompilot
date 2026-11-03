@@ -7,7 +7,7 @@ import { measureRoof, previewStyle } from "../../lib/api";
 import type { MeasureResponse, PreviewResponse } from "../../lib/solar";
 import { useLang } from "../../lib/i18n";
 import { useSession } from "../../lib/session";
-import ConsentGate from "../../components/ConsentGate";
+import ConsentNote from "../../components/ConsentNote";
 import SignInPrompt from "../../components/SignInPrompt";
 
 const STYLES = ["solar", "heat_pump", "facade"] as const;
@@ -15,8 +15,8 @@ const STYLES = ["solar", "heat_pump", "facade"] as const;
 export default function SolarPage() {
   const { t, lang } = useLang();
   const { me, loading } = useSession();
+  const agreed = me?.consent_agreed === true;
   const [file, setFile] = useState<File | null>(null);
-  const [consented, setConsented] = useState(false);
   const [widthM, setWidthM] = useState("");
   const [measured, setMeasured] = useState<MeasureResponse | null>(null);
   const [photoUrl, setPhotoUrl] = useState("");
@@ -38,7 +38,7 @@ export default function SolarPage() {
   }
 
   async function measure() {
-    if (!file || !consented) return;
+    if (!file || !agreed) return;
     setError("");
     setMeasured(null);
     setBusy(true);
@@ -53,7 +53,7 @@ export default function SolarPage() {
   }
 
   async function render() {
-    if (!file || !consented) return;
+    if (!file || !agreed) return;
     setError("");
     setPreview(null);
     setBusy(true);
@@ -78,42 +78,33 @@ export default function SolarPage() {
       <section className="panel" aria-label={t.solarTitle}>
         <h2>{t.solarTitle}</h2>
         <p className="muted">{t.solarIntro}</p>
-        <ConsentGate
-          text={t.consentSolar}
-          storageKey="solar"
-          onChange={setConsented}
-        >
-          {() => (
-            <>
-              <div className="form-row">
-                <label>
-                  {t.housePhoto}{" "}
-                  <input
-                    type="file"
-                    accept="image/jpeg,image/png,image/webp,image/gif"
-                    onChange={(e) => pick(e.target.files?.[0] ?? null)}
-                  />
-                </label>
-                <label>
-                  {t.roofWidth}{" "}
-                  <input
-                    type="number"
-                    min="1"
-                    value={widthM}
-                    onChange={(e) => setWidthM(e.target.value)}
-                  />
-                </label>
-                <button
-                  type="button"
-                  disabled={!file || !consented || busy}
-                  onClick={() => measure().catch(() => {})}
-                >
-                  {t.measureRoof}
-                </button>
-              </div>
-            </>
-          )}
-        </ConsentGate>
+        <ConsentNote />
+        <div className="form-row">
+          <label>
+            {t.housePhoto}{" "}
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif"
+              onChange={(e) => pick(e.target.files?.[0] ?? null)}
+            />
+          </label>
+          <label>
+            {t.roofWidth}{" "}
+            <input
+              type="number"
+              min="1"
+              value={widthM}
+              onChange={(e) => setWidthM(e.target.value)}
+            />
+          </label>
+          <button
+            type="button"
+            disabled={!file || !agreed || busy}
+            onClick={() => measure().catch(() => {})}
+          >
+            {t.measureRoof}
+          </button>
+        </div>
         {error && <p className="error">{error}</p>}
         {measured?.note && <p className="muted">{measured.note}</p>}
         {measured && measured.boxes.length > 0 && photoUrl && (
@@ -217,7 +208,7 @@ export default function SolarPage() {
         </div>
         <button
           type="button"
-          disabled={!file || !consented || busy}
+          disabled={!file || !agreed || busy}
           onClick={() => render().catch(() => {})}
         >
           {t.renderPreview}: {styleLabel}

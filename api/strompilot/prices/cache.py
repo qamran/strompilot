@@ -18,6 +18,11 @@ class CachedEntry(BaseModel):
     series: PriceSeries
 
 
+def _fetch_key(source: str, target: date) -> str:
+    """Key one fair-use mark by both source and price day."""
+    return f"{source}:{target.isoformat()}"
+
+
 class DiskCache:
     """JSON files per day plus one fetch log, all under one directory."""
 
@@ -48,16 +53,16 @@ class DiskCache:
         entry = CachedEntry(source=source, fetched_at=fetched_at, series=series)
         self._write_text_atomic(self._series_path(target), entry.model_dump_json())
 
-    def last_fetch(self, source: str) -> date | None:
-        """Return the last day a live fetch ran for a source, if any."""
+    def last_fetch(self, source: str, target: date) -> date | None:
+        """Return the last day a live fetch ran for a source and day, if any."""
         raw = self._read_fetch_log()
-        value = raw.get(source)
+        value = raw.get(_fetch_key(source, target))
         return date.fromisoformat(value) if value else None
 
-    def mark_fetched(self, source: str, day: date) -> None:
-        """Record that a live fetch ran for a source on a day."""
+    def mark_fetched(self, source: str, target: date, day: date) -> None:
+        """Record that a live fetch ran for a source and day."""
         raw = self._read_fetch_log()
-        raw[source] = day.isoformat()
+        raw[_fetch_key(source, target)] = day.isoformat()
         self._write_text_atomic(self._fetches_path(), json.dumps(raw, indent=2))
 
     def _read_fetch_log(self) -> dict[str, str]:

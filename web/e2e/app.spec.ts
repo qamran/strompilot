@@ -15,23 +15,9 @@ const METER_PHOTO = resolve(
   join("..", "api", "tests", "fixtures", "meter", "meter_clean.png"),
 );
 
-async function agreeConsent(page: Page, key: "plan" | "photo") {
-  const bar = page.getByRole("region", { name: "Consent" });
-  await expect(bar).toBeVisible();
-  await bar.getByRole("checkbox").check();
-  const button = bar.getByRole("button", { name: "I agree" });
-  await expect(button).toBeEnabled();
-  await button.click();
-  await expect(bar).toBeHidden();
-  const stored = await page.evaluate(
-    (k) => sessionStorage.getItem(`strompilot-consent:${k}`),
-    key,
-  );
-  expect(stored).toBe("1");
-}
-
 async function signIn(page: Page, email: string) {
   await page.goto("/signin");
+  await page.getByRole("checkbox").check();
   await page.getByRole("textbox", { name: "Email address" }).fill(email);
   await page.getByRole("button", { name: "Send link" }).click();
   await page.getByTestId("dev-link").click();
@@ -58,9 +44,9 @@ test("prices view loads live data", async ({ page }) => {
   await expect(
     page.getByText("Your power copilot for dynamic tariffs"),
   ).toBeVisible();
-  await expect(page.getByText("Right now")).toBeVisible();
+  await expect(page.locator("section.hero").getByText("Right now")).toBeVisible();
   await expect(page.locator("canvas")).toBeVisible();
-  await expect(page.getByText("Savings approx.")).toBeVisible();
+  await expect(page.getByText("Cheapest window")).toBeVisible();
   await page.screenshot({ path: join(SHOTS, "prices.png") });
 });
 
@@ -76,25 +62,37 @@ test("sign-in flow reaches the account", async ({ page }) => {
   await expect(page.getByText("Please sign in.")).toBeVisible();
 });
 
-test("consent remembers the choice for the session", async ({ page }) => {
+test("consent gates planning until agreed", async ({ page }) => {
   await signIn(page, "e2e-consent@example.de");
   await page.goto("/");
-  await agreeConsent(page, "plan");
-  await page.reload();
-  await expect(
-    page.getByRole("region", { name: "Consent" }),
-  ).toBeHidden();
+  await expect(page.getByText("Planning consent agreed.")).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Make a plan" }),
   ).toBeEnabled();
+  await page.reload();
+  await expect(page.getByText("Planning consent agreed.")).toBeVisible();
+  await page.goto("/household");
+  const consent = page.locator('section[aria-label="Consent"]');
+  await consent.getByRole("button", { name: "Revoke" }).click();
+  await expect(
+    consent.getByText("Planning needs your consent."),
+  ).toBeVisible();
+  await page.goto("/");
+  await expect(page.getByText("Planning needs your consent.")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Make a plan" }),
+  ).toBeDisabled();
+  await page.goto("/household");
+  await consent.getByRole("button", { name: "I agree" }).click();
+  await expect(consent.getByText("Planning consent agreed.")).toBeVisible();
 });
 
 test("language toggle switches the whole view", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "DE", exact: true }).click();
-  await expect(page.getByText("Preise").first()).toBeVisible();
+  await expect(page.getByText("Heute").first()).toBeVisible();
   await page.getByRole("button", { name: "EN", exact: true }).click();
-  await expect(page.getByText("Prices").first()).toBeVisible();
+  await expect(page.getByText("Today").first()).toBeVisible();
 });
 
 test("command palette opens and navigates", async ({ page }) => {
@@ -113,7 +111,9 @@ test("plan journey completes, approves, and learns", async ({
   test.setTimeout(600_000);
   await signIn(page, "e2e-plan@example.de");
   await page.goto("/");
-  await agreeConsent(page, "plan");
+  await expect(
+    page.getByRole("button", { name: "Make a plan" }),
+  ).toBeEnabled();
   await page
     .getByRole("textbox", { name: "Make a plan" })
     .fill("Night shift, baby sleeps by 10 pm, car must be full by 07:00");
@@ -147,7 +147,7 @@ test("plan journey completes, approves, and learns", async ({
 test("meter upload reads and confirms", async ({ page }) => {
   await signIn(page, "e2e-meter@example.de");
   await page.goto("/meter");
-  await agreeConsent(page, "photo");
+  await expect(page.getByText("Planning consent agreed.")).toBeVisible();
   const rows = page.locator("section ul li");
   const before = await rows.count();
   await page.locator('input[type="file"]').setInputFiles(METER_PHOTO);
@@ -157,7 +157,7 @@ test("meter upload reads and confirms", async ({ page }) => {
   await upload.click();
   await expect(rows).toHaveCount(before + 1, { timeout: 120_000 });
   const fresh = rows.last();
-  await expect(fresh).toContainText("4217.3 kWh");
+  await expect(fresh).toContainText("4,217.3 kWh");
   await expect(fresh).toContainText("1ESY1162345678");
   await expect(fresh.getByRole("img", { name: /Meter photo/ })).toBeVisible();
   await fresh.getByRole("button", { name: "Confirm" }).click();

@@ -7,10 +7,12 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from fastapi import HTTPException, UploadFile
 from fastapi.testclient import TestClient
 from PIL import Image
+from starlette.datastructures import Headers
 
-from strompilot.main import app, get_meter_vision
+from strompilot.main import _read_photo, app, get_meter_vision
 from strompilot.metervision.pipeline import MeterVision
 from strompilot.prices.cache import DiskCache
 from tests.fakes import FakeRouter, FakeSam, day_series, reply
@@ -290,6 +292,32 @@ def test_oversize_photo_rejected(meter_setup: tuple[TestClient, Path]) -> None:
         files={"file": ("big.png", b"x" * (11 * 1024 * 1024), "image/png")},
     )
     assert response.status_code == 422
+
+
+def test_read_photo_rejects_declared_size_without_reading() -> None:
+    body = io.BytesIO(b"tiny")
+    upload = UploadFile(
+        body,
+        size=11 * 1024 * 1024,
+        filename="big.png",
+        headers=Headers({"content-type": "image/png"}),
+    )
+    with pytest.raises(HTTPException) as caught:
+        _read_photo(upload)
+    assert caught.value.status_code == 422
+    assert body.tell() == 0
+
+
+def test_read_photo_caps_lying_size_while_streaming() -> None:
+    upload = UploadFile(
+        io.BytesIO(b"x" * (11 * 1024 * 1024)),
+        size=4,
+        filename="big.png",
+        headers=Headers({"content-type": "image/png"}),
+    )
+    with pytest.raises(HTTPException) as caught:
+        _read_photo(upload)
+    assert caught.value.status_code == 422
 
 
 def test_vision_failure_returns_502(

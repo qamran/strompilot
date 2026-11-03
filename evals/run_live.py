@@ -23,7 +23,7 @@ from strompilot.agents.router import ModelRouter
 from strompilot.evals.cases import load_cases
 from strompilot.evals.runner import THRESHOLDS, compare_variants, run_live
 
-LIVE_KINDS = ("extraction", "narration", "redteam")
+LIVE_KINDS = ("extraction", "narration", "redteam", "judge")
 
 
 def _mean(records: list[dict[str, Any]], key: str) -> float:
@@ -44,6 +44,7 @@ def _summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
     ext = by_kind.get("extraction", [])
     nar = by_kind.get("narration", [])
     red = by_kind.get("redteam", [])
+    jud = by_kind.get("judge", [])
     judge_min = min(
         (r.get("judge_score", 0) for r in nar),
         default=0,
@@ -59,6 +60,10 @@ def _summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
         "redteam.block_rate": _verdict(
             "redteam.block_rate",
             sum(1 for r in red if r["passed"]) / len(red) if red else 0.0,
+        ),
+        "judge.groundedness": _verdict(
+            "judge.groundedness",
+            sum(1 for r in jud if r["passed"]) / len(jud) if jud else 0.0,
         ),
     }
     return {"checks": checks, "passed": all(c["passed"] for c in checks.values())}

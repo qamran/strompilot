@@ -1,7 +1,7 @@
 """Routing goldens for the supervisor graph."""
 
 from strompilot.agents.state import CriticVerdict, PlanState
-from strompilot.agents.supervisor import route_next, route_perceive
+from strompilot.agents.supervisor import route_next, route_perceive, route_schedule
 
 
 def test_perceive_routes_planning_to_analyst() -> None:
@@ -21,13 +21,13 @@ def test_approved_verdict_routes_to_publish() -> None:
     assert route_next(state) == "publish"
 
 
-def test_veto_routes_back_to_scheduler() -> None:
+def test_veto_routes_back_to_analyst() -> None:
     state = PlanState(
         request="x",
         verdict=CriticVerdict(approved=False, notes=["beleg fehlt"]),
         iterations=1,
     )
-    assert route_next(state) == "scheduler"
+    assert route_next(state) == "analyst"
 
 
 def test_error_routes_to_end() -> None:
@@ -51,3 +51,11 @@ def test_error_beats_approval() -> None:
 
 def test_missing_verdict_fails_closed() -> None:
     assert route_next(PlanState(request="x")) == "end"
+
+
+def test_scheduler_error_ends_run() -> None:
+    assert route_schedule(PlanState(request="x", error="nothing to schedule")) == "end"
+
+
+def test_scheduler_clean_explains() -> None:
+    assert route_schedule(PlanState(request="x")) == "explainer"

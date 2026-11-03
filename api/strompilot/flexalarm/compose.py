@@ -31,11 +31,13 @@ def _hint(candidate: AlertCandidate, lang: str) -> str:
         extreme = _amount(candidate.extreme_ct_kwh, lang)
         if lang == "en":
             return (
-                "Prices are negative: consuming now earns money back. "
+                "Spot prices are negative, so this is the cheapest "
+                "stretch of the day. "
                 f"Lowest point {extreme} ct/kWh."
             )
         return (
-            "Die Preise sind negativ: Wer jetzt verbraucht, bekommt Geld raus. "
+            "Die Börsenpreise sind negativ: Das ist die billigste "
+            "Strecke des Tages. "
             f"Tiefstwert {extreme} ct/kWh."
         )
     if candidate.kind == "price_spike":

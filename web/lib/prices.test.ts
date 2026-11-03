@@ -14,10 +14,30 @@ describe("day-ahead price contract", () => {
           start: "2026-10-29T00:00:00+00:00",
           end: "2026-10-29T01:00:00+00:00",
           eur_per_mwh: 180.0,
+          all_in_ct_kwh: 42.73,
         },
       ],
     };
     expect(parseDayAheadPriceSeries(payload)).toEqual(payload);
+  });
+
+  it("accepts legacy points without an all-in figure", () => {
+    const payload = {
+      date: "2026-10-29",
+      source: "sample",
+      stale: false,
+      unit: "Eur/MWh",
+      attribution: "Sample data for demo purposes - no live feed",
+      prices: [
+        {
+          start: "2026-10-29T00:00:00+00:00",
+          end: "2026-10-29T01:00:00+00:00",
+          eur_per_mwh: 180.0,
+        },
+      ],
+    };
+    const parsed = parseDayAheadPriceSeries(payload);
+    expect(parsed.prices[0].all_in_ct_kwh).toBeUndefined();
   });
 
   it("rejects malformed series payloads", () => {

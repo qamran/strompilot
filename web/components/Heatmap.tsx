@@ -8,8 +8,8 @@ import {
   useState,
   type MouseEvent as ReactMouseEvent,
 } from "react";
-import type { DayAheadPriceSeries } from "../lib/prices";
-import { priceClass } from "../lib/format";
+import { allInCt, type DayAheadPriceSeries } from "../lib/prices";
+import { cheapestWindow, formatCt, priceClass } from "../lib/format";
 import { useLang } from "../lib/i18n";
 
 const COLORS: Record<string, string> = {
@@ -22,7 +22,7 @@ const COLORS: Record<string, string> = {
 const AXIS_HOURS = [0, 6, 12, 18, 24];
 
 export default function Heatmap({ series }: { series: DayAheadPriceSeries }) {
-  const { t } = useLang();
+  const { t, lang } = useLang();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [hover, setHover] = useState<string | null>(null);
 
@@ -33,8 +33,14 @@ export default function Heatmap({ series }: { series: DayAheadPriceSeries }) {
     if (!ctx) return;
     const prices = series.prices;
     if (prices.length === 0) return;
-    const avg =
-      prices.reduce((sum, point) => sum + point.eur_per_mwh, 0) / prices.length;
+    const allIns = prices.map(allInCt);
+    const cheap = cheapestWindow(prices);
+    const cheapStart = cheap
+      ? prices.findIndex((p) => p.start.slice(11, 16) === cheap.start)
+      : -1;
+    const cheapEnd = cheap
+      ? prices.findIndex((p) => p.end.slice(11, 16) === cheap.end)
+      : -1;
     const width = canvas.width;
     const height = canvas.height;
     const axisPad = 22;
@@ -51,7 +57,7 @@ export default function Heatmap({ series }: { series: DayAheadPriceSeries }) {
       if (!ctx || !canvas) return;
       ctx.clearRect(0, 0, width, height);
       prices.forEach((point, index) => {
-        const cls = priceClass(point.eur_per_mwh, avg);
+        const cls = priceClass(point.eur_per_mwh, allIns[index], allIns);
         const barHeight = (Math.abs(point.eur_per_mwh) / max) * (plotH - 16);
         const x = index * barWidth + 1;
         const w = Math.max(barWidth - 2, 1);
@@ -68,6 +74,25 @@ export default function Heatmap({ series }: { series: DayAheadPriceSeries }) {
         }
         ctx.globalAlpha = 1;
       });
+      if (cheap && cheapStart >= 0 && cheapEnd >= cheapStart) {
+        const x0 = cheapStart * barWidth + 1;
+        const x1 = (cheapEnd + 1) * barWidth - 1;
+        ctx.strokeStyle = COLORS.cheap;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(x0, 3);
+        ctx.lineTo(x1, 3);
+        ctx.moveTo(x0, 3);
+        ctx.lineTo(x0, 9);
+        ctx.moveTo(x1, 3);
+        ctx.lineTo(x1, 9);
+        ctx.stroke();
+        ctx.fillStyle = COLORS.cheap;
+        ctx.font = "11px JetBrains Mono, monospace";
+        ctx.textAlign = "center";
+        const label = `${cheap.start}–${cheap.end} · ${formatCt(cheap.avgCt, lang)}`;
+        ctx.fillText(label, (x0 + x1) / 2, 22);
+      }
       ctx.fillStyle = "#61738d";
       ctx.font = "11px JetBrains Mono, monospace";
       ctx.textAlign = "center";
@@ -90,7 +115,7 @@ export default function Heatmap({ series }: { series: DayAheadPriceSeries }) {
     return () => {
       alive = false;
     };
-  }, [series]);
+  }, [series, lang]);
 
   function onMove(event: ReactMouseEvent<HTMLCanvasElement>) {
     const canvas = canvasRef.current;
@@ -101,9 +126,8 @@ export default function Heatmap({ series }: { series: DayAheadPriceSeries }) {
     );
     const point = series.prices[Math.min(Math.max(index, 0), 23)];
     if (!point) return;
-    const ct = point.eur_per_mwh / 10;
     const start = point.start.slice(11, 16);
-    setHover(`${start} · ${ct.toFixed(1)} ct/kWh`);
+    setHover(`${start} · ${formatCt(allInCt(point), lang)}/kWh`);
   }
 
   const legend: Array<[string, string]> = [
@@ -121,7 +145,7 @@ export default function Heatmap({ series }: { series: DayAheadPriceSeries }) {
         height={180}
         className="heatmap"
         role="img"
-        aria-label={`Preise ${series.date}`}
+        aria-label={`${t.today} ${series.date}`}
         onMouseMove={onMove}
         onMouseLeave={() => setHover(null)}
       />

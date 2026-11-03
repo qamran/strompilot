@@ -12,6 +12,8 @@ import strompilot.prices.smard as smard_client
 from strompilot.main import app
 from strompilot.prices.cache import DiskCache
 from strompilot.prices.models import PricePoint, PriceSeries
+from strompilot.tariff.defaults import DEFAULTS
+from strompilot.tariff.engine import decompose
 
 
 def _fail_awattar(target: date) -> list[PricePoint]:
@@ -57,6 +59,35 @@ def test_fresh_cache_is_served(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     response = TestClient(app).get("/prices/day-ahead?date=2026-10-29")
     assert response.status_code == 200
     assert response.json()["source"] == "awattar-live"
+
+
+def test_day_ahead_points_carry_all_in_price(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PRICE_CACHE_DIR", str(tmp_path))
+    cache = DiskCache(tmp_path)
+    now = datetime.now(UTC)
+    cache.write(
+        date(2026, 10, 29),
+        PriceSeries(
+            date=date(2026, 10, 29),
+            source="awattar-live",
+            attribution="cached",
+            prices=[
+                PricePoint(
+                    start=datetime(2026, 10, 29, 0, 0, tzinfo=UTC),
+                    end=datetime(2026, 10, 29, 1, 0, tzinfo=UTC),
+                    eur_per_mwh=250.0,
+                )
+            ],
+        ),
+        "awattar-live",
+        now,
+    )
+    response = TestClient(app).get("/prices/day-ahead?date=2026-10-29")
+    assert response.status_code == 200
+    (point,) = response.json()["prices"]
+    assert point["all_in_ct_kwh"] == decompose(250.0, DEFAULTS).total
 
 
 def test_default_date_is_berlin_today(

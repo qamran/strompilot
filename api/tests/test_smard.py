@@ -5,8 +5,15 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from strompilot.prices.models import berlin_day_bounds
-from strompilot.prices.smard import parse_smard, select_week_file, week_timestamps
+from strompilot.prices.smard import (
+    fetch_smard,
+    parse_smard,
+    select_week_file,
+    week_timestamps,
+)
 
 FIXTURE = Path(__file__).parent / "fixtures" / "smard_4169.json"
 INDEX_FIXTURE = Path(__file__).parent / "fixtures" / "smard_index.json"
@@ -59,3 +66,29 @@ def test_select_week_file_clamps_out_of_range_targets() -> None:
     stamps = load_index()
     assert select_week_file(stamps, date(2027, 6, 1)) == max(stamps)
     assert select_week_file(stamps, date(2010, 1, 1)) == min(stamps)
+
+
+def test_fetch_uses_short_timeouts(monkeypatch: pytest.MonkeyPatch) -> None:
+    import httpx
+
+    seen: list[object] = []
+
+    class _Response:
+        def __init__(self, payload: object) -> None:
+            self._payload = payload
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> object:
+            return self._payload
+
+    def fake_get(url: str, timeout: object) -> _Response:
+        seen.append(timeout)
+        if url.endswith("index_hour.json"):
+            return _Response({"timestamps": [0]})
+        return _Response({"series": []})
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    assert fetch_smard(date(2026, 1, 15)) == []
+    assert seen == [5.0, 5.0]

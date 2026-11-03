@@ -41,7 +41,12 @@ def load_price_bars(
         awattar_fetcher=awattar_fetcher,
         smard_fetcher=smard_fetcher,
     )
-    bars = [_to_bar(point, series.source, defaults) for point in series.prices]
+    seen: dict[str, PriceBar] = {}
+    for point in series.prices:
+        key = point.start.isoformat()
+        if key not in seen:
+            seen[key] = _to_bar(point, series.source, defaults)
+    bars = [seen[key] for key in sorted(seen)]
     return LoadedPrices(
         bars=bars,
         source=series.source,
@@ -54,4 +59,6 @@ def _to_bar(point: PricePoint, source: str, defaults: TariffDefaults) -> PriceBa
     """Convert one energy point into an all-in Berlin-hour bar."""
     hour = point.start.astimezone(BERLIN).hour
     total = decompose(point.eur_per_mwh, defaults).total
-    return PriceBar(hour=hour, price_ct_kwh=total, source=source)
+    return PriceBar(
+        hour=hour, price_ct_kwh=total, source=source, start_utc=point.start.isoformat()
+    )

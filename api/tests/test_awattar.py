@@ -43,6 +43,29 @@ def test_unknown_unit_is_rejected() -> None:
         parse_awattar(payload, target)
 
 
+def test_fetch_uses_short_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    import httpx
+
+    from strompilot.prices.awattar import fetch_awattar
+
+    seen: dict[str, object] = {}
+
+    class _Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> object:
+            return {"data": []}
+
+    def fake_get(url: str, timeout: object) -> _Response:
+        seen["timeout"] = timeout
+        return _Response()
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    assert fetch_awattar(date(2026, 1, 15)) == []
+    assert seen["timeout"] == 5.0
+
+
 def test_points_bucket_by_berlin_day() -> None:
     start = datetime(2026, 10, 29, 23, 15, tzinfo=UTC)
     end = datetime(2026, 10, 29, 23, 45, tzinfo=UTC)

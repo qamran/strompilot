@@ -5,7 +5,9 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import ClassVar
 
+from strompilot.db import connect
 from strompilot.memory.models import MemoryError
 
 from .models import Alert, AlertCandidate
@@ -50,11 +52,15 @@ def dedup_key(household_id: str, candidate: AlertCandidate) -> str:
 class AlertStore:
     """Household-scoped alerts with insert-level deduplication."""
 
+    _SCHEMA_READY: ClassVar[set[Path]] = set()
+
     def __init__(self, path: Path) -> None:
         self._path = path
         path.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(path) as conn:
-            conn.executescript(_SCHEMA)
+        if path not in AlertStore._SCHEMA_READY:
+            with connect(path) as conn:
+                conn.executescript(_SCHEMA)
+            AlertStore._SCHEMA_READY.add(path)
             columns = {row[1] for row in conn.execute("PRAGMA table_info(alerts)")}
             if "delivered_at" not in columns:
                 conn.execute("ALTER TABLE alerts ADD COLUMN delivered_at TEXT")
@@ -64,7 +70,7 @@ class AlertStore:
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
         """Yield one committed-plus-closed connection per operation."""
-        conn = sqlite3.connect(self._path)
+        conn = connect(self._path)
         try:
             with conn:
                 yield conn
@@ -141,6 +147,15 @@ class AlertStore:
                 (household_id, limit),
             ).fetchall()
         return [self._to_alert(row) for row in rows]
+
+    def forget_household(self, household_id: str) -> None:
+        """Delete one household's alerts."""
+        household_id = _require("household_id", household_id)
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM alerts WHERE household_id = ?",
+                (household_id,),
+            )
 
     def held(self, household_id: str) -> list[Alert]:
         """List one household's quiet-held alerts, oldest first."""

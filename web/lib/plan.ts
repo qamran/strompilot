@@ -21,6 +21,13 @@ export interface PlanCitation {
   detail: string;
 }
 
+export interface PlanPriceBar {
+  hour: number;
+  price_ct_kwh: number;
+  source: string;
+  start_utc?: string;
+}
+
 export interface PlanDetail {
   thread_id: string;
   status: string;
@@ -30,6 +37,11 @@ export interface PlanDetail {
   total_cost_eur: number | null;
   error: string | null;
   audit: string[];
+  plan_day: string | null;
+  price_source: string | null;
+  price_stale: boolean;
+  attribution: Record<string, string>;
+  prices: PlanPriceBar[] | null;
 }
 
 function asRecord(value: unknown, name: string): Record<string, unknown> {
@@ -60,6 +72,24 @@ function parseSlot(value: unknown): PlanSlot {
     slot.price_ct_kwh = record.price_ct_kwh;
   if (typeof record.cost_eur === "number") slot.cost_eur = record.cost_eur;
   return slot;
+}
+
+function parsePriceBar(value: unknown): PlanPriceBar {
+  const record = asRecord(value, "PlanPriceBar");
+  if (
+    typeof record.hour !== "number" ||
+    typeof record.price_ct_kwh !== "number" ||
+    typeof record.source !== "string"
+  ) {
+    throw new Error("PlanPriceBar has invalid fields");
+  }
+  const bar: PlanPriceBar = {
+    hour: record.hour,
+    price_ct_kwh: record.price_ct_kwh,
+    source: record.source,
+  };
+  if (typeof record.start_utc === "string") bar.start_utc = record.start_utc;
+  return bar;
 }
 
 function parseCitation(value: unknown): PlanCitation {
@@ -96,7 +126,23 @@ export function parsePlanDetail(value: unknown): PlanDetail {
     (record.citations !== null && !Array.isArray(record.citations)) ||
     (record.total_cost_eur !== null && typeof record.total_cost_eur !== "number") ||
     (record.error !== null && typeof record.error !== "string") ||
-    !Array.isArray(record.audit)
+    !Array.isArray(record.audit) ||
+    (record.plan_day !== null &&
+      record.plan_day !== undefined &&
+      typeof record.plan_day !== "string") ||
+    (record.price_source !== null &&
+      record.price_source !== undefined &&
+      typeof record.price_source !== "string") ||
+    (record.price_stale !== undefined && typeof record.price_stale !== "boolean") ||
+    (record.attribution !== undefined &&
+      (typeof record.attribution !== "object" ||
+        record.attribution === null ||
+        Object.values(record.attribution).some(
+          (model) => typeof model !== "string",
+        ))) ||
+    (record.prices !== null &&
+      record.prices !== undefined &&
+      !Array.isArray(record.prices))
   ) {
     throw new Error("PlanDetail has invalid fields");
   }
@@ -115,5 +161,14 @@ export function parsePlanDetail(value: unknown): PlanDetail {
     total_cost_eur: record.total_cost_eur as number | null,
     error: record.error as string | null,
     audit: (record.audit as unknown[]).map(String),
+    plan_day: (record.plan_day as string | null | undefined) ?? null,
+    price_source: (record.price_source as string | null | undefined) ?? null,
+    price_stale: record.price_stale === true,
+    attribution:
+      (record.attribution as Record<string, string> | undefined) ?? {},
+    prices:
+      record.prices === null || record.prices === undefined
+        ? null
+        : (record.prices as unknown[]).map(parsePriceBar),
   };
 }

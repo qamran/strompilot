@@ -3,18 +3,21 @@
 import base64
 import hashlib
 import io
+import json
 import logging
 import os
 import re
+import shutil
 import sqlite3
 import time
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from functools import partial
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, BinaryIO, Literal
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
@@ -32,19 +35,21 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from langchain_core.runnables import RunnableConfig
+from langgraph.checkpoint.base import CheckpointTuple
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
 from PIL import Image, UnidentifiedImageError
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 
 from strompilot.agents.router import ModelRouter
 from strompilot.agents.state import PlanState
 from strompilot.agents.supervisor import build_graph
-from strompilot.auth.mail import LogMailer, Mailer, mailer_from_env
+from strompilot.auth.mail import Mailer, mailer_from_env
 from strompilot.auth.models import AuthError, Session
 from strompilot.auth.store import AuthStore
 from strompilot.contract import CONTRACT_VERSION, HealthResponse
+from strompilot.db import connect as db_connect
 from strompilot.flexalarm.loop import run_once
 from strompilot.flexalarm.models import Alert, WatchReport
 from strompilot.flexalarm.store import AlertStore
@@ -52,7 +57,8 @@ from strompilot.learning.models import Feedback, LearningError, Verdict
 from strompilot.learning.update import LEARNED_KEY, update_from_feedback
 from strompilot.lifeplan.loaders import PriceLoader, load_price_bars
 from strompilot.lifeplan.schemas import DeviceConstraint, PriceBar
-from strompilot.llm.types import ChatRouter, LlmError
+from strompilot.llm.client import META_BASE_URL, SPARK_MODEL, ChatClient
+from strompilot.llm.types import ChatRouter, LlmError, Message
 from strompilot.memory.models import Episode, MemoryError, Preference
 from strompilot.memory.store import MemoryStore
 from strompilot.metervision.calibrate import FALLBACK_ANNUAL_KWH, calibrate
@@ -70,8 +76,12 @@ from strompilot.prices.models import BERLIN, PriceSeries
 from strompilot.prices.service import get_day_ahead_prices
 from strompilot.report.images import ImageClient
 from strompilot.report.monthly import MonthlyReport, art_prompt, build_month
+from strompilot.retrieval.baseten import BasetenClient
+from strompilot.retrieval.corpus import load_corpus
+from strompilot.retrieval.retriever import Retriever
 from strompilot.solar.estimate import estimate_roof
 from strompilot.tariff.defaults import DEFAULTS
+from strompilot.tariff.engine import decompose
 from strompilot.wallbox.client import (
     WallboxClient,
     WallboxDriver,
@@ -85,7 +95,30 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Strompilot API", version="0.1.0")
+
+def _prewarm_databases() -> None:
+    """Create every table once at startup, before any request."""
+    memory_db = _memory_db()
+    MemoryStore(memory_db)
+    MeterStore(memory_db)
+    AlertStore(memory_db)
+    AuthStore(memory_db)
+    _ensure_run_tables(_threads_db())
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Prepare the databases, warn about dev links, then serve."""
+    _prewarm_databases()
+    if os.environ.get("STROMPILOT_DEV_LINKS") == "1":
+        logger.warning(
+            "STROMPILOT_DEV_LINKS=1: magic links are returned in API "
+            "responses; never enable in production"
+        )
+    yield
+
+
+app = FastAPI(title="Strompilot API", version="0.1.0", lifespan=lifespan)
 
 # The browser Leitstand reads the API cross-origin (web port vs API
 # port), so the local frontend origins are allowed explicitly. Nothing
@@ -172,6 +205,7 @@ class RequestLinkBody(BaseModel):
     """One magic-link request for one email address."""
 
     email: str
+    consent: bool = False
 
 
 class RequestLinkResponse(BaseModel):
@@ -188,6 +222,19 @@ class SessionResponse(BaseModel):
     email: str
     household_id: str
     expires_at: str
+    consent_agreed: bool = False
+
+
+CONSENT_KEY = "consent"
+
+
+def _consent_agreed(household_id: str) -> bool:
+    """Report whether one household agreed to power planning."""
+    try:
+        consent = _store().get_preference(household_id, CONSENT_KEY)
+    except MemoryError:
+        return False
+    return isinstance(consent, dict) and consent.get("agreed") is True
 
 
 class SignOutResponse(BaseModel):
@@ -209,23 +256,52 @@ class MigrateResponse(BaseModel):
     migrated: dict[str, int]
 
 
+_LINK_RATE_LIMIT = 50
+_LINK_RATE_WINDOW_SECONDS = 60.0
+_link_rate_hits: dict[str, list[float]] = {}
+
+
+def reset_link_rate_limits() -> None:
+    """Clear the request-link rate limiter (tests only)."""
+    _link_rate_hits.clear()
+
+
+def _check_link_rate_limit(client_ip: str) -> None:
+    """Reject one request-link caller past 50 hits per minute."""
+    now = time.time()
+    hits = [
+        hit
+        for hit in _link_rate_hits.get(client_ip, [])
+        if now - hit < _LINK_RATE_WINDOW_SECONDS
+    ]
+    if len(hits) >= _LINK_RATE_LIMIT:
+        raise HTTPException(
+            status_code=429, detail="too many link requests, retry in a minute"
+        )
+    hits.append(now)
+    _link_rate_hits[client_ip] = hits
+
+
 @app.post("/auth/request-link", response_model=RequestLinkResponse)
-def request_link(body: RequestLinkBody) -> RequestLinkResponse:
+def request_link(body: RequestLinkBody, request: Request) -> RequestLinkResponse:
     """Send one magic link to one email address."""
     email = body.email.strip().lower()
     if _EMAIL_RE.match(email) is None:
         raise HTTPException(status_code=422, detail="email must be valid")
+    client_ip = request.client.host if request.client else "unknown"
+    _check_link_rate_limit(client_ip)
     try:
-        raw = _auth_store().issue_token(email)
+        raw = _auth_store().issue_token(email, consent_agreed=body.consent)
     except AuthError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     link = f"{_web_url()}/auth/verify?token={raw}"
     mailer = _mailer()
     mailer.send(email, link)
+    dev_links = os.environ.get("STROMPILOT_DEV_LINKS") == "1"
     return RequestLinkResponse(
         email=email,
         sent=True,
-        dev_link=link if isinstance(mailer, LogMailer) else None,
+        dev_link=link if dev_links else None,
     )
 
 
@@ -234,15 +310,23 @@ def verify_link(token: str, response: Response) -> SessionResponse:
     """Redeem one magic link for a session cookie."""
     try:
         email = _auth_store().consume_token(token)
+        consent = _auth_store().read_token_consent(token)
         raw = _auth_store().create_session(email)
         session = _auth_store().load_session(raw)
     except AuthError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
+    if consent:
+        _store().set_preference(
+            session.household_id,
+            CONSENT_KEY,
+            {"agreed": True, "at": datetime.now(UTC).isoformat()},
+        )
     _set_session_cookie(response, raw)
     return SessionResponse(
         email=session.email,
         household_id=session.household_id,
         expires_at=session.expires_at.isoformat(),
+        consent_agreed=consent,
     )
 
 
@@ -253,6 +337,7 @@ def read_me(session: Session = Depends(current_session)) -> SessionResponse:
         email=session.email,
         household_id=session.household_id,
         expires_at=session.expires_at.isoformat(),
+        consent_agreed=_consent_agreed(session.household_id),
     )
 
 
@@ -305,9 +390,13 @@ def _cache_dir() -> Path:
 
 @app.get("/prices/day-ahead", response_model=PriceSeries)
 def read_day_ahead_prices(date: date | None = None) -> PriceSeries:
-    """Return one day of day-ahead prices with its source label."""
+    """Return one day of day-ahead prices with all-in household figures."""
     target = date or datetime.now(ZoneInfo("Europe/Berlin")).date()
-    return get_day_ahead_prices(target, _cache_dir(), datetime.now(UTC))
+    series = get_day_ahead_prices(target, _cache_dir(), datetime.now(UTC))
+    for point in series.prices:
+        if point.all_in_ct_kwh is None:
+            point.all_in_ct_kwh = decompose(point.eur_per_mwh, DEFAULTS).total
+    return series
 
 
 class PreferencesResponse(BaseModel):
@@ -329,12 +418,19 @@ class SetPreferenceBody(BaseModel):
 
     value: Any
 
+    @model_validator(mode="after")
+    def _cap_value(self) -> "SetPreferenceBody":
+        """Cap the serialized value so one write cannot flood the store."""
+        if len(json.dumps(self.value, default=str)) > 8000:
+            raise ValueError("value must be at most 8000 characters")
+        return self
+
 
 class AddEpisodeBody(BaseModel):
     """New memory envelope."""
 
     kind: str
-    text: str
+    text: str = Field(max_length=2000)
 
 
 def _memory_db() -> Path:
@@ -348,6 +444,47 @@ def _memory_db() -> Path:
 def _store() -> MemoryStore:
     """Open the household memory store."""
     return MemoryStore(_memory_db())
+
+
+@dataclass(frozen=True)
+class Settings:
+    """One request's configuration snapshot, read from the environment."""
+
+    meta_key: str
+    baseten_key: str
+    threads_db: Path
+    memory_db: Path
+
+    @classmethod
+    def from_env(cls) -> "Settings":
+        """Build one snapshot from the current environment."""
+        return cls(
+            meta_key=os.environ.get("META_API_KEY", ""),
+            baseten_key=os.environ.get("BASETEN_API_KEY", ""),
+            threads_db=_threads_db(),
+            memory_db=_memory_db(),
+        )
+
+
+def get_settings() -> Settings:
+    """Build the settings snapshot for one request."""
+    return Settings.from_env()
+
+
+def require_model_keys(
+    settings: Settings = Depends(get_settings),
+) -> tuple[str, str]:
+    """Require both model keys, returning them for one request."""
+    if not settings.meta_key or not settings.baseten_key:
+        raise HTTPException(status_code=500, detail="model keys missing")
+    return (settings.meta_key, settings.baseten_key)
+
+
+def require_meta_key(settings: Settings = Depends(get_settings)) -> str:
+    """Require the Meta key, returning it for one request."""
+    if not settings.meta_key:
+        raise HTTPException(status_code=500, detail="model keys missing")
+    return settings.meta_key
 
 
 @app.get("/memory/preferences", response_model=PreferencesResponse)
@@ -445,13 +582,68 @@ def remove_episode(
 def forget_household(
     household_id: str, session: Session = Depends(current_session)
 ) -> dict[str, bool]:
-    """Delete every preference and memory of one household."""
+    """Delete every trace of one household across all stores."""
     household_id = _guard(session, household_id)
     try:
         _store().forget_household(household_id)
-    except MemoryError as exc:
+        AlertStore(_memory_db()).forget_household(household_id)
+        photos = MeterStore(_memory_db()).forget_household(household_id)
+        AuthStore(_memory_db()).forget_household(household_id)
+    except (MemoryError, MeterError, AuthError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    for photo in photos:
+        try:
+            (_photos_dir() / Path(photo).name).unlink(missing_ok=True)
+        except OSError:
+            logger.warning("forgotten photo %s could not be removed", photo)
+    shutil.rmtree(_art_household_dir(household_id), ignore_errors=True)
+    forget_household_threads(_threads_db(), household_id)
     return {"forgotten": True}
+
+
+def forget_household_threads(threads_db: Path, household_id: str) -> None:
+    """Delete one household's plan threads, checkpoints, and run records.
+
+    Only threads with a runs-table row are found; runs started before
+    the runs table existed keep their checkpoints.
+    """
+    if not threads_db.exists():
+        return
+    conn = db_connect(threads_db)
+    try:
+        with conn:
+            tables = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                )
+            }
+            thread_ids: list[str] = []
+            if "runs" in tables:
+                thread_ids = [
+                    str(row[0])
+                    for row in conn.execute(
+                        "SELECT thread_id FROM runs WHERE household_id = ?",
+                        (household_id,),
+                    )
+                ]
+                conn.execute(
+                    "DELETE FROM runs WHERE household_id = ?",
+                    (household_id,),
+                )
+            if "run_errors" in tables:
+                _ensure_run_errors(conn)
+                conn.execute(
+                    "DELETE FROM run_errors WHERE household_id = ?",
+                    (household_id,),
+                )
+            keys = [(thread_id,) for thread_id in thread_ids]
+            if "checkpoints" in tables:
+                conn.executemany("DELETE FROM checkpoints WHERE thread_id = ?", keys)
+            if "writes" in tables:
+                conn.executemany("DELETE FROM writes WHERE thread_id = ?", keys)
+    finally:
+        conn.close()
 
 
 class ApprovalReview(BaseModel):
@@ -487,14 +679,11 @@ def _threads_db() -> Path:
     return Path(__file__).resolve().parent.parent.parent / "data" / "threads.db"
 
 
-def get_approval_graph() -> Iterator[
-    CompiledStateGraph[PlanState, None, PlanState, PlanState]
-]:
+def get_approval_graph(
+    keys: tuple[str, str] = Depends(require_model_keys),
+) -> Iterator[CompiledStateGraph[PlanState, None, PlanState, PlanState]]:
     """Yield one checkpointed supervisor graph per request."""
-    meta_key = os.environ.get("META_API_KEY", "")
-    baseten_key = os.environ.get("BASETEN_API_KEY", "")
-    if not meta_key or not baseten_key:
-        raise HTTPException(status_code=500, detail="model keys missing")
+    meta_key, baseten_key = keys
     router = ModelRouter.from_keys(meta_key, baseten_key)
     now = datetime.now(BERLIN)
     loader = partial(
@@ -504,8 +693,14 @@ def get_approval_graph() -> Iterator[
         datetime.now(UTC),
         DEFAULTS,
     )
-    with SqliteSaver.from_conn_string(str(_threads_db())) as saver:
-        yield build_graph(router, loader, checkpointer=saver)
+    with _threads_saver(_threads_db()) as saver:
+        yield build_graph(
+            router,
+            loader,
+            checkpointer=saver,
+            memory=_store(),
+            wallbox=WallboxClient(),
+        )
 
 
 def _thread_config(thread_id: str) -> RunnableConfig:
@@ -513,52 +708,250 @@ def _thread_config(thread_id: str) -> RunnableConfig:
     return {"configurable": {"thread_id": thread_id}}
 
 
-def _read_status(
+@contextmanager
+def _threads_saver(threads_db: Path) -> Iterator[SqliteSaver]:
+    """Yield one checkpoint saver over a WAL plus busy-timeout connection."""
+    conn = db_connect(threads_db)
+    try:
+        yield SqliteSaver(conn)
+    finally:
+        conn.close()
+
+
+_RUNS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS runs (
+    thread_id TEXT PRIMARY KEY,
+    household_id TEXT NOT NULL DEFAULT '',
+    started_at TEXT NOT NULL,
+    finished_at TEXT
+);
+"""
+
+RUN_TIMEOUT_MINUTES = 10
+
+STORE_UNAVAILABLE = "plan store unavailable, retry shortly"
+
+
+@dataclass
+class RunRecord:
+    """One background run's lifetime, tracked beside the checkpoints."""
+
+    thread_id: str
+    household_id: str
+    started_at: str
+    finished_at: str | None
+
+
+def record_run_started(
+    threads_db: Path, thread_id: str, household_id: str = ""
+) -> None:
+    """Persist one background run's start, resetting any earlier attempt."""
+    _ensure_run_tables(threads_db)
+    conn = db_connect(threads_db)
+    try:
+        with conn:
+            conn.execute(
+                "INSERT INTO runs (thread_id, household_id, started_at, finished_at)"
+                " VALUES (?, ?, ?, NULL)"
+                " ON CONFLICT (thread_id) DO UPDATE SET"
+                " household_id = excluded.household_id,"
+                " started_at = excluded.started_at, finished_at = NULL",
+                (thread_id, household_id, datetime.now(UTC).isoformat()),
+            )
+    finally:
+        conn.close()
+
+
+def record_run_finished(threads_db: Path, thread_id: str) -> None:
+    """Persist one background run's end, creating the row when missing."""
+    stamp = datetime.now(UTC).isoformat()
+    _ensure_run_tables(threads_db)
+    conn = db_connect(threads_db)
+    try:
+        with conn:
+            conn.execute(
+                "INSERT INTO runs (thread_id, household_id, started_at, finished_at)"
+                " VALUES (?, '', ?, ?)"
+                " ON CONFLICT (thread_id) DO UPDATE SET"
+                " finished_at = excluded.finished_at",
+                (thread_id, stamp, stamp),
+            )
+    finally:
+        conn.close()
+
+
+def read_run(threads_db: Path, thread_id: str) -> RunRecord | None:
+    """Read one run's lifetime, or None when the thread never started."""
+    if not threads_db.exists():
+        return None
+    _ensure_run_tables(threads_db)
+    conn = db_connect(threads_db)
+    try:
+        row = conn.execute(
+            "SELECT thread_id, household_id, started_at, finished_at"
+            " FROM runs WHERE thread_id = ?",
+            (thread_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    return RunRecord(
+        thread_id=str(row[0]),
+        household_id=str(row[1]),
+        started_at=str(row[2]),
+        finished_at=str(row[3]) if row[3] is not None else None,
+    )
+
+
+def _run_is_stale(run: RunRecord | None) -> bool:
+    """Report whether one unfinished run passed the timeout."""
+    if run is None or run.finished_at is not None:
+        return False
+    try:
+        started = datetime.fromisoformat(run.started_at)
+    except ValueError:
+        return False
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=UTC)
+    return datetime.now(UTC) - started > timedelta(minutes=RUN_TIMEOUT_MINUTES)
+
+
+def _read_thread_state(
+    threads_db: Path, thread_id: str
+) -> tuple[CheckpointTuple | None, RunRecord | None, str | None, str | None]:
+    """Fetch one thread's checkpoint, run row, and crash records."""
+    with _threads_saver(threads_db) as saver:
+        snapshot = saver.get_tuple(_thread_config(thread_id))
+    run = read_run(threads_db, thread_id)
+    recorded = read_run_error(threads_db, thread_id)
+    recorded_owner = read_run_owner(threads_db, thread_id) if run is None else None
+    return snapshot, run, recorded, recorded_owner
+
+
+def _snapshot_values(snapshot: CheckpointTuple | None) -> dict[str, Any]:
+    """Return one checkpoint's channel values, tolerating missing data."""
+    if snapshot is None:
+        return {}
+    values = snapshot.checkpoint.get("channel_values")
+    return values if isinstance(values, dict) else {}
+
+
+def _snapshot_interrupts(snapshot: CheckpointTuple | None) -> list[dict[str, Any]]:
+    """Return one checkpoint's pending interrupt payloads, oldest first."""
+    found: list[dict[str, Any]] = []
+    if snapshot is None or snapshot.pending_writes is None:
+        return found
+    for _task_id, channel, value in snapshot.pending_writes:
+        if channel != "__interrupt__":
+            continue
+        items = value if isinstance(value, list) else [value]
+        for item in items:
+            review = getattr(item, "value", item)
+            found.append(review if isinstance(review, dict) else {})
+    return found
+
+
+def _stale_error() -> str:
+    """Explain one timed-out run with a retry hint."""
+    return (
+        f"run timed out after {RUN_TIMEOUT_MINUTES} minutes without progress;"
+        " start a new plan to retry"
+    )
+
+
+def _status_from_snapshot(
     thread_id: str,
-    graph: CompiledStateGraph[PlanState, None, PlanState, PlanState],
+    snapshot: CheckpointTuple | None,
+    run: RunRecord | None,
+    recorded: str | None,
+    recorded_owner: str | None = None,
     owner: str | None = None,
 ) -> ApprovalStatus:
-    """Derive one thread's approval status from its checkpoint."""
-    state = graph.get_state(_thread_config(thread_id))
-    if not state.values:
-        raise HTTPException(status_code=404, detail="thread not found")
-    if owner is not None and state.values.get("household_id") != owner:
-        raise HTTPException(status_code=403, detail="thread belongs elsewhere")
-    for task in state.tasks:
-        for found in task.interrupts:
-            review = found.value
+    """Derive one thread's status from a checkpoint plus the run records."""
+    values = _snapshot_values(snapshot)
+    if not values:
+        if recorded is None and run is None:
+            raise HTTPException(status_code=404, detail="unknown thread")
+        household = run.household_id if run else (recorded_owner or "")
+        if owner is not None and household and household != owner:
+            raise HTTPException(status_code=403, detail="thread belongs elsewhere")
+        if recorded is not None:
+            return ApprovalStatus(thread_id=thread_id, status="blocked", error=recorded)
+        if run is not None and run.finished_at is not None:
+            return ApprovalStatus(thread_id=thread_id, status="done")
+        if _run_is_stale(run):
             return ApprovalStatus(
-                thread_id=thread_id,
-                status="paused",
-                review=ApprovalReview(
-                    type=str(review.get("type", "plan_approval")),
-                    schedule=list(review.get("schedule", [])),
-                    total_cost_eur=float(review.get("total_cost_eur", 0.0)),
-                    narration=str(review.get("narration", "")),
-                ),
+                thread_id=thread_id, status="blocked", error=_stale_error()
             )
-    values = state.values
+        return ApprovalStatus(thread_id=thread_id, status="running")
+    if owner is not None:
+        claimed: str = values.get("household_id") or ""
+        if not claimed:
+            claimed = (run.household_id if run else "") or (recorded_owner or "")
+        if claimed and claimed != owner:
+            raise HTTPException(status_code=403, detail="thread belongs elsewhere")
+    interrupts = _snapshot_interrupts(snapshot)
+    if interrupts:
+        review = interrupts[0]
+        return ApprovalStatus(
+            thread_id=thread_id,
+            status="paused",
+            review=ApprovalReview(
+                type=str(review.get("type", "plan_approval")),
+                schedule=list(review.get("schedule", [])),
+                total_cost_eur=float(review.get("total_cost_eur", 0.0)),
+                narration=str(review.get("narration", "")),
+            ),
+        )
+    if recorded is not None:
+        return ApprovalStatus(thread_id=thread_id, status="blocked", error=recorded)
     if values.get("published") is True:
         return ApprovalStatus(thread_id=thread_id, status="published", published=True)
     if values.get("error"):
         return ApprovalStatus(
             thread_id=thread_id, status="blocked", error=str(values["error"])
         )
-    if not state.tasks:
+    if run is not None and run.finished_at is not None:
+        return ApprovalStatus(thread_id=thread_id, status="done")
+    if _run_is_stale(run):
+        return ApprovalStatus(
+            thread_id=thread_id, status="blocked", error=_stale_error()
+        )
+    if run is None:
         return ApprovalStatus(thread_id=thread_id, status="done")
     return ApprovalStatus(thread_id=thread_id, status="running")
+
+
+@dataclass
+class PlanReader:
+    """Keyless read access to the thread database."""
+
+    threads_db: Path
+
+
+def get_plan_reader() -> PlanReader:
+    """Build the keyless thread reader for one request."""
+    return PlanReader(threads_db=_threads_db())
 
 
 @app.get("/approvals/threads/{thread_id}", response_model=ApprovalStatus)
 def read_thread(
     thread_id: str,
-    graph: CompiledStateGraph[PlanState, None, PlanState, PlanState] = Depends(
-        get_approval_graph
-    ),
+    reader: PlanReader = Depends(get_plan_reader),
     session: Session = Depends(current_session),
 ) -> ApprovalStatus:
-    """Report one thread's approval state."""
-    return _read_status(thread_id, graph, session.household_id)
+    """Report one thread's approval state without model keys."""
+    try:
+        snapshot, run, recorded, recorded_owner = _read_thread_state(
+            reader.threads_db, thread_id
+        )
+    except sqlite3.Error as exc:
+        logger.exception("thread read %s failed", thread_id)
+        raise HTTPException(status_code=503, detail=STORE_UNAVAILABLE) from exc
+    return _status_from_snapshot(
+        thread_id, snapshot, run, recorded, recorded_owner, session.household_id
+    )
 
 
 @app.post("/approvals/threads/{thread_id}/decide", response_model=ApprovalStatus)
@@ -571,14 +964,27 @@ def decide_thread(
     session: Session = Depends(current_session),
 ) -> ApprovalStatus:
     """Resume one paused thread with a human decision."""
-    current = _read_status(thread_id, graph, session.household_id)
+    try:
+        state = _read_thread_state(_threads_db(), thread_id)
+    except sqlite3.Error as exc:
+        logger.exception("thread read %s failed", thread_id)
+        raise HTTPException(status_code=503, detail=STORE_UNAVAILABLE) from exc
+    current = _status_from_snapshot(thread_id, *state, session.household_id)
     if current.status != "paused":
         raise HTTPException(status_code=409, detail="thread is not awaiting approval")
-    graph.invoke(
-        Command(resume={"approved": body.approved}),
-        _thread_config(thread_id),
-    )
-    return _read_status(thread_id, graph, session.household_id)
+    try:
+        graph.invoke(
+            Command(resume={"approved": body.approved}),
+            _thread_config(thread_id),
+        )
+    finally:
+        record_run_finished(_threads_db(), thread_id)
+    try:
+        state = _read_thread_state(_threads_db(), thread_id)
+    except sqlite3.Error as exc:
+        logger.exception("thread read %s failed", thread_id)
+        raise HTTPException(status_code=503, detail=STORE_UNAVAILABLE) from exc
+    return _status_from_snapshot(thread_id, *state, session.household_id)
 
 
 class AlertsResponse(BaseModel):
@@ -588,13 +994,11 @@ class AlertsResponse(BaseModel):
     alerts: list[Alert]
 
 
-def get_watch_router() -> ModelRouter:
+def get_watch_router(
+    keys: tuple[str, str] = Depends(require_model_keys),
+) -> ModelRouter:
     """Build the production router for one watcher pass."""
-    meta_key = os.environ.get("META_API_KEY", "")
-    baseten_key = os.environ.get("BASETEN_API_KEY", "")
-    if not meta_key or not baseten_key:
-        raise HTTPException(status_code=500, detail="model keys missing")
-    return ModelRouter.from_keys(meta_key, baseten_key)
+    return ModelRouter.from_keys(*keys)
 
 
 @app.post("/flexalarm/watch", response_model=WatchReport)
@@ -665,12 +1069,11 @@ class ConfirmResponse(BaseModel):
     note: str
 
 
-def get_meter_vision() -> MeterVision:
+def get_meter_vision(
+    keys: tuple[str, str] = Depends(require_model_keys),
+) -> MeterVision:
     """Build the production vision deps for one request."""
-    meta_key = os.environ.get("META_API_KEY", "")
-    baseten_key = os.environ.get("BASETEN_API_KEY", "")
-    if not meta_key or not baseten_key:
-        raise HTTPException(status_code=500, detail="model keys missing")
+    meta_key, baseten_key = keys
     return MeterVision(
         router=ModelRouter.from_keys(meta_key, baseten_key),
         sam=SamClient(meta_key),
@@ -708,13 +1111,8 @@ def propose_reading(
     is set with explicit household consent.
     """
     household_id = _guard(session, household_id)
-    mime = file.content_type or ""
-    extension = _PHOTO_MIME_EXTENSIONS.get(mime)
-    if extension is None:
-        raise HTTPException(status_code=422, detail="photo must be an image")
-    photo = file.file.read()
-    if len(photo) > _MAX_PHOTO_BYTES:
-        raise HTTPException(status_code=422, detail="photo exceeds 10 MB")
+    photo, mime = _read_photo(file)
+    extension = _PHOTO_MIME_EXTENSIONS[mime]
     try:
         proposal = process_photo(photo, mime, vision.sam, vision.router)
     except MeterError as exc:
@@ -865,7 +1263,7 @@ class FeedbackBody(BaseModel):
 
     device: str
     verdict: Verdict
-    note: str = ""
+    note: str = Field(default="", max_length=2000)
 
 
 class FeedbackResponse(BaseModel):
@@ -900,11 +1298,18 @@ def submit_feedback(
         current = store.get_preference(household_id, LEARNED_KEY) or {}
         if not isinstance(current, dict):
             current = {}
-        learned = update_from_feedback(feedback, current)
-        store.set_preference(household_id, LEARNED_KEY, learned)
         text = f"{feedback.device}: {feedback.verdict}"
         if feedback.note.strip():
             text += f" ({feedback.note.strip()})"
+        latest = store.list_episodes(household_id, kind="feedback", limit=1)
+        if latest and latest[0].text == text:
+            return FeedbackResponse(
+                household_id=household_id,
+                episode=latest[0],
+                learned_windows=current,
+            )
+        learned = update_from_feedback(feedback, current)
+        store.set_preference(household_id, LEARNED_KEY, learned)
         episode = store.add_episode(household_id, "feedback", text)
     except (MemoryError, LearningError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -928,6 +1333,112 @@ def read_feedback(
     return FeedbackListResponse(household_id=household_id, feedback=episodes)
 
 
+class AskCitation(BaseModel):
+    """One tariff-guide source behind an answer."""
+
+    title: str
+    source_name: str
+    source_url: str
+
+
+class AskResponse(BaseModel):
+    """One answered why-question with its cited sources."""
+
+    question: str
+    answer: str
+    citations: list[AskCitation]
+    model: str
+
+
+def get_ask_router(
+    keys: tuple[str, str] = Depends(require_model_keys),
+) -> ModelRouter:
+    """Build the production router for one Ask-Why answer."""
+    return ModelRouter.from_keys(*keys)
+
+
+_ASK_SYSTEM = {
+    "de": (
+        "Beantworte die Frage in höchstens drei Sätzen auf Deutsch,"
+        " nur aus den Passagen. Zitiere mit [1], [2] und erfinde nichts."
+    ),
+    "en": (
+        "Answer the question in at most three sentences in English,"
+        " using only the passages. Cite with [1], [2]; invent nothing."
+    ),
+}
+
+_ASK_EMPTY = {
+    "de": (
+        "Dazu steht nichts in der Tarifhilfe. Frage zum Beispiel nach"
+        " Umlagen, Netzentgelten oder Spotpreisen."
+    ),
+    "en": (
+        "The tariff guide says nothing about that. Try asking about"
+        " levies, grid fees, or spot prices."
+    ),
+}
+
+
+@app.get("/ask", response_model=AskResponse)
+def ask_why(
+    household_id: str,
+    q: str = Query(max_length=500),
+    lang: Literal["de", "en"] = "de",
+    router: ModelRouter = Depends(get_ask_router),
+    keys: tuple[str, str] = Depends(require_model_keys),
+    session: Session = Depends(current_session),
+) -> AskResponse:
+    """Answer one why-question from the tariff guide with citations."""
+    household_id = _guard(session, household_id)
+    question = q.strip()
+    if not question:
+        raise HTTPException(status_code=422, detail="q must not be blank")
+    retriever = Retriever(load_corpus())
+    hits = retriever.retrieve(question, k=5)
+    if not hits:
+        return AskResponse(
+            question=question, answer=_ASK_EMPTY[lang], citations=[], model="none"
+        )
+    meta_key, baseten_key = keys
+    reranked = retriever.rerank(
+        question,
+        hits,
+        BasetenClient(
+            baseten_key, fallback=ChatClient(META_BASE_URL, meta_key, SPARK_MODEL)
+        ),
+    )
+    top = reranked[:3]
+    passages = "\n\n".join(
+        f"[{number}] {hit.title}: {hit.text} ({hit.source_name})"
+        for number, hit in enumerate(top, start=1)
+    )
+    try:
+        result = router.chat(
+            "ask",
+            [
+                Message(role="system", content=_ASK_SYSTEM[lang]),
+                Message(role="user", content=f"Question: {question}\n{passages}"),
+            ],
+            300,
+        )
+    except LlmError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return AskResponse(
+        question=question,
+        answer=result.content.strip(),
+        citations=[
+            AskCitation(
+                title=hit.title,
+                source_name=hit.source_name,
+                source_url=hit.source_url,
+            )
+            for hit in top
+        ],
+        model=result.model,
+    )
+
+
 class MonthlyReportResponse(BaseModel):
     """One monthly report plus its cached illustration, if any."""
 
@@ -943,11 +1454,8 @@ class IllustrationResponse(BaseModel):
     cached: bool
 
 
-def get_image_client() -> ImageClient:
+def get_image_client(meta_key: str = Depends(require_meta_key)) -> ImageClient:
     """Build the production image client for one request."""
-    meta_key = os.environ.get("META_API_KEY", "")
-    if not meta_key:
-        raise HTTPException(status_code=500, detail="model keys missing")
     return ImageClient(meta_key)
 
 
@@ -959,10 +1467,15 @@ def _art_dir() -> Path:
     return Path(__file__).resolve().parent.parent.parent / "data" / "report_art"
 
 
+def _art_household_dir(household_id: str) -> Path:
+    """Return the cached art directory, keyed by household hash."""
+    digest = hashlib.sha1(household_id.encode("utf-8")).hexdigest()[:16]
+    return _art_dir() / digest
+
+
 def _art_path(household_id: str, month: str) -> Path:
     """Return the cached art file, keyed by household hash."""
-    digest = hashlib.sha1(household_id.encode("utf-8")).hexdigest()[:16]
-    return _art_dir() / digest / f"{month}.png"
+    return _art_household_dir(household_id) / f"{month}.png"
 
 
 def _checked_month(month: str) -> tuple[int, int]:
@@ -1053,11 +1566,8 @@ _PREVIEW_PROMPTS = {
 }
 
 
-def get_sam_client() -> SamClient:
+def get_sam_client(meta_key: str = Depends(require_meta_key)) -> SamClient:
     """Build the production SAM client for one request."""
-    meta_key = os.environ.get("META_API_KEY", "")
-    if not meta_key:
-        raise HTTPException(status_code=500, detail="model keys missing")
     return SamClient(meta_key)
 
 
@@ -1103,15 +1613,32 @@ class PreviewResponse(BaseModel):
     ai_label: str
 
 
+_READ_CHUNK_BYTES = 1024 * 1024
+
+
+def _read_capped(body: BinaryIO, limit: int) -> bytes:
+    """Stream one upload body, stopping as soon as it passes the limit."""
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = body.read(_READ_CHUNK_BYTES)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > limit:
+            raise HTTPException(status_code=422, detail="photo exceeds 10 MB")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 def _read_photo(file: UploadFile) -> tuple[bytes, str]:
     """Read and validate one uploaded photo."""
     mime = file.content_type or ""
     if mime not in _PHOTO_MIME_EXTENSIONS:
         raise HTTPException(status_code=422, detail="photo must be an image")
-    photo = file.file.read()
-    if len(photo) > _MAX_PHOTO_BYTES:
+    if file.size is not None and file.size > _MAX_PHOTO_BYTES:
         raise HTTPException(status_code=422, detail="photo exceeds 10 MB")
-    return photo, mime
+    return _read_capped(file.file, _MAX_PHOTO_BYTES), mime
 
 
 @app.post("/solar/measure", response_model=MeasureResponse)
@@ -1220,23 +1747,50 @@ class PlanRunner:
     wallbox: WallboxDriver
 
 
+_RUN_ERRORS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS run_errors (
+    thread_id TEXT PRIMARY KEY,
+    message TEXT NOT NULL,
+    household_id TEXT NOT NULL DEFAULT ''
+);
+"""
+
+
+def _ensure_run_errors(conn: sqlite3.Connection) -> None:
+    """Create the crash table, migrating older databases in place."""
+    conn.executescript(_RUN_ERRORS_SCHEMA)
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(run_errors)")}
+    if "household_id" not in columns:
+        conn.execute(
+            "ALTER TABLE run_errors ADD COLUMN household_id TEXT NOT NULL DEFAULT ''"
+        )
+
+
+_RUN_TABLES_READY: set[Path] = set()
+
+
+def _ensure_run_tables(threads_db: Path) -> None:
+    """Create the runs and crash tables once per database file."""
+    if threads_db in _RUN_TABLES_READY:
+        return
+    conn = db_connect(threads_db)
+    try:
+        with conn:
+            conn.executescript(_RUNS_SCHEMA)
+            _ensure_run_errors(conn)
+    finally:
+        conn.close()
+    _RUN_TABLES_READY.add(threads_db)
+
+
 def record_run_error(
     threads_db: Path, thread_id: str, message: str, household_id: str = ""
 ) -> None:
     """Persist one background-run crash beside the checkpoints."""
-    conn = sqlite3.connect(threads_db)
+    _ensure_run_tables(threads_db)
+    conn = db_connect(threads_db)
     try:
         with conn:
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS run_errors "
-                "(thread_id TEXT PRIMARY KEY, message TEXT NOT NULL)"
-            )
-            columns = {row[1] for row in conn.execute("PRAGMA table_info(run_errors)")}
-            if "household_id" not in columns:
-                conn.execute(
-                    "ALTER TABLE run_errors ADD COLUMN household_id TEXT NOT NULL"
-                    " DEFAULT ''"
-                )
             conn.execute(
                 "INSERT OR REPLACE INTO run_errors"
                 " (thread_id, message, household_id) VALUES (?, ?, ?)",
@@ -1250,14 +1804,13 @@ def read_run_error(threads_db: Path, thread_id: str) -> str | None:
     """Read one recorded crash, or None when the run never crashed."""
     if not threads_db.exists():
         return None
-    conn = sqlite3.connect(threads_db)
+    _ensure_run_tables(threads_db)
+    conn = db_connect(threads_db)
     try:
         row = conn.execute(
             "SELECT message FROM run_errors WHERE thread_id = ?",
             (thread_id,),
         ).fetchone()
-    except sqlite3.OperationalError:
-        return None
     finally:
         conn.close()
     return str(row[0]) if row else None
@@ -1267,28 +1820,23 @@ def read_run_owner(threads_db: Path, thread_id: str) -> str | None:
     """Read one recorded crash's household, or None when unknown."""
     if not threads_db.exists():
         return None
-    conn = sqlite3.connect(threads_db)
+    _ensure_run_tables(threads_db)
+    conn = db_connect(threads_db)
     try:
-        columns = {row[1] for row in conn.execute("PRAGMA table_info(run_errors)")}
-        if "household_id" not in columns:
-            return None
         row = conn.execute(
             "SELECT household_id FROM run_errors WHERE thread_id = ?",
             (thread_id,),
         ).fetchone()
-    except sqlite3.OperationalError:
-        return None
     finally:
         conn.close()
     return str(row[0]) if row and row[0] else None
 
 
-def get_plan_runner() -> PlanRunner:
+def get_plan_runner(
+    keys: tuple[str, str] = Depends(require_model_keys),
+) -> PlanRunner:
     """Build the production planning deps for one request."""
-    meta_key = os.environ.get("META_API_KEY", "")
-    baseten_key = os.environ.get("BASETEN_API_KEY", "")
-    if not meta_key or not baseten_key:
-        raise HTTPException(status_code=500, detail="model keys missing")
+    meta_key, baseten_key = keys
     cache_dir = _cache_dir()
     now = datetime.now(UTC)
     return PlanRunner(
@@ -1304,7 +1852,7 @@ class PlanBody(BaseModel):
     """One planning request from the UI."""
 
     household_id: str
-    text: str
+    text: str = Field(max_length=2000)
     plan_day: date | None = None
     lang: Literal["de", "en"] = "de"
 
@@ -1314,6 +1862,15 @@ class PlanCreated(BaseModel):
 
     thread_id: str
     status: str
+
+
+class PlanPriceBar(BaseModel):
+    """One priced hour backing the plan timeline shading."""
+
+    hour: int
+    price_ct_kwh: float
+    source: str
+    start_utc: str | None = None
 
 
 class PlanDetail(BaseModel):
@@ -1327,6 +1884,11 @@ class PlanDetail(BaseModel):
     total_cost_eur: float | None = None
     error: str | None = None
     audit: list[str] = []
+    plan_day: str | None = None
+    price_source: str | None = None
+    price_stale: bool = False
+    attribution: dict[str, str] = {}
+    prices: list[PlanPriceBar] | None = None
 
 
 def _run_plan_to_pause(
@@ -1339,27 +1901,30 @@ def _run_plan_to_pause(
 ) -> None:
     """Run one thread to its approval pause, recording failures."""
     try:
-        with SqliteSaver.from_conn_string(str(runner.threads_db)) as saver:
-            graph = build_graph(
-                runner.router,
-                runner.loader_for(plan_day),
-                checkpointer=saver,
-                memory=runner.memory,
-                wallbox=runner.wallbox,
-            )
-            graph.invoke(
-                {
-                    "request": text,
-                    "household_id": household_id,
-                    "plan_day": plan_day.isoformat(),
-                    "approval": "pending",
-                    "lang": lang,
-                },
-                _thread_config(thread_id),
-            )
-    except Exception as exc:
-        record_run_error(runner.threads_db, thread_id, str(exc), household_id)
-        logger.exception("plan run %s failed", thread_id)
+        try:
+            with _threads_saver(runner.threads_db) as saver:
+                graph = build_graph(
+                    runner.router,
+                    runner.loader_for(plan_day),
+                    checkpointer=saver,
+                    memory=runner.memory,
+                    wallbox=runner.wallbox,
+                )
+                graph.invoke(
+                    {
+                        "request": text,
+                        "household_id": household_id,
+                        "plan_day": plan_day.isoformat(),
+                        "approval": "pending",
+                        "lang": lang,
+                    },
+                    _thread_config(thread_id),
+                )
+        except Exception as exc:
+            record_run_error(runner.threads_db, thread_id, str(exc), household_id)
+            logger.exception("plan run %s failed", thread_id)
+    finally:
+        record_run_finished(runner.threads_db, thread_id)
 
 
 @app.post("/plan", response_model=PlanCreated, status_code=202)
@@ -1375,6 +1940,7 @@ def start_plan(
         raise HTTPException(status_code=422, detail="text must not be blank")
     thread_id = uuid.uuid4().hex
     plan_day = body.plan_day or datetime.now(BERLIN).date() + timedelta(days=1)
+    record_run_started(runner.threads_db, thread_id, household_id)
     background.add_task(
         _run_plan_to_pause,
         runner,
@@ -1390,47 +1956,49 @@ def start_plan(
 @app.get("/plan/{thread_id}", response_model=PlanDetail)
 def read_plan(
     thread_id: str,
-    runner: PlanRunner = Depends(get_plan_runner),
+    reader: PlanReader = Depends(get_plan_reader),
     session: Session = Depends(current_session),
 ) -> PlanDetail:
-    """Read one thread's plan state."""
-    recorded = read_run_error(runner.threads_db, thread_id)
+    """Read one thread's plan state without model keys."""
     try:
-        with SqliteSaver.from_conn_string(str(runner.threads_db)) as saver:
-            snapshot = saver.get_tuple(_thread_config(thread_id))
-            if snapshot is None:
-                if recorded is None:
-                    raise HTTPException(status_code=404, detail="unknown thread")
-                owner = read_run_owner(runner.threads_db, thread_id)
-                if owner != session.household_id:
-                    raise HTTPException(
-                        status_code=403, detail="thread belongs elsewhere"
-                    )
-                values: dict[str, Any] = {}
-                status = "blocked"
-            else:
-                values = snapshot.checkpoint["channel_values"]
-                if not isinstance(values, dict):
-                    raise HTTPException(status_code=500, detail="unreadable thread")
-                if values.get("household_id") != session.household_id:
-                    raise HTTPException(
-                        status_code=403, detail="thread belongs elsewhere"
-                    )
-                graph = build_graph(
-                    runner.router,
-                    runner.loader_for(datetime.now(BERLIN).date()),
-                    checkpointer=saver,
-                    memory=runner.memory,
-                    wallbox=runner.wallbox,
-                )
-                status = _read_status(thread_id, graph).status
-                if recorded is not None:
-                    status = "blocked"
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=404, detail="unknown thread") from exc
+        snapshot, run, recorded, recorded_owner = _read_thread_state(
+            reader.threads_db, thread_id
+        )
+    except sqlite3.Error as exc:
+        logger.exception("plan read %s failed", thread_id)
+        raise HTTPException(status_code=503, detail=STORE_UNAVAILABLE) from exc
+    current = _status_from_snapshot(
+        thread_id, snapshot, run, recorded, recorded_owner, session.household_id
+    )
+    status = current.status
+    values = _snapshot_values(snapshot)
     audit = values.get("audit", [])
+    plan_day = values.get("plan_day")
+    price_source = values.get("price_source")
+    raw_attribution = values.get("attribution", {})
+    raw_prices = values.get("prices")
+    prices: list[PlanPriceBar] | None = None
+    if isinstance(raw_prices, list):
+        bars: list[PlanPriceBar] = []
+        for bar in raw_prices:
+            if (
+                isinstance(bar, dict)
+                and isinstance(bar.get("hour"), int)
+                and isinstance(bar.get("price_ct_kwh"), (int, float))
+            ):
+                start_utc = bar.get("start_utc")
+                bars.append(
+                    PlanPriceBar(
+                        hour=bar["hour"],
+                        price_ct_kwh=float(bar["price_ct_kwh"]),
+                        source=str(bar.get("source", "unknown")),
+                        start_utc=str(start_utc) if start_utc is not None else None,
+                    )
+                )
+        prices = bars
+    error = recorded if recorded is not None else values.get("error")
+    if error is None:
+        error = current.error
     return PlanDetail(
         thread_id=thread_id,
         status=status,
@@ -1438,60 +2006,72 @@ def read_plan(
         narration=values.get("narration"),
         citations=values.get("citations"),
         total_cost_eur=values.get("total_cost_eur"),
-        error=recorded if recorded is not None else values.get("error"),
+        error=str(error) if error is not None else None,
         audit=[str(event) for event in audit] if isinstance(audit, list) else [],
+        plan_day=plan_day if isinstance(plan_day, str) else None,
+        price_source=price_source if isinstance(price_source, str) else None,
+        price_stale=values.get("price_stale") is True,
+        attribution=(
+            {str(block): str(model) for block, model in raw_attribution.items()}
+            if isinstance(raw_attribution, dict)
+            else {}
+        ),
+        prices=prices,
     )
 
 
-def _trace_events(thread_id: str, runner: PlanRunner) -> Iterator[str]:
+def _trace_events(
+    thread_id: str, threads_db: Path, max_polls: int = 750, interval: float = 0.4
+) -> Iterator[str]:
     """Yield new audit lines until the thread settles or time runs out."""
-    with SqliteSaver.from_conn_string(str(runner.threads_db)) as saver:
-        graph = build_graph(
-            runner.router,
-            runner.loader_for(datetime.now(BERLIN).date()),
-            checkpointer=saver,
-            memory=runner.memory,
-            wallbox=runner.wallbox,
-        )
-        seen = 0
-        for _ in range(150):
+    seen = 0
+    try:
+        for _ in range(max_polls):
             try:
-                snapshot = graph.get_state(_thread_config(thread_id))
-                status = _read_status(thread_id, graph).status
+                snapshot, run, recorded, recorded_owner = _read_thread_state(
+                    threads_db, thread_id
+                )
+            except sqlite3.Error:
+                logger.exception("trace poll %s failed", thread_id)
+                return
+            try:
+                current = _status_from_snapshot(
+                    thread_id, snapshot, run, recorded, recorded_owner
+                )
             except HTTPException:
                 return
-            values = snapshot.values if isinstance(snapshot.values, dict) else {}
+            values = _snapshot_values(snapshot)
             audit = values.get("audit", [])
             lines = [str(event) for event in audit] if isinstance(audit, list) else []
             for line in lines[seen:]:
                 yield f"data: {line}\n\n"
             seen = len(lines)
-            if status in ("published", "done", "blocked"):
+            if current.status in ("published", "done", "blocked"):
                 return
-            time.sleep(0.4)
+            time.sleep(interval)
+    finally:
+        yield "data: [done]\n\n"
 
 
 @app.get("/plan/{thread_id}/trace")
 def stream_trace(
     thread_id: str,
-    runner: PlanRunner = Depends(get_plan_runner),
+    reader: PlanReader = Depends(get_plan_reader),
     session: Session = Depends(current_session),
 ) -> StreamingResponse:
     """Stream one thread's audit trace as server-sent events."""
     try:
-        with SqliteSaver.from_conn_string(str(runner.threads_db)) as saver:
-            snapshot = saver.get_tuple(_thread_config(thread_id))
-    except Exception as exc:
-        raise HTTPException(status_code=404, detail="unknown thread") from exc
-    if snapshot is None:
-        raise HTTPException(status_code=404, detail="unknown thread")
-    values = snapshot.checkpoint.get("channel_values")
-    if not isinstance(values, dict) or values.get("household_id") != (
-        session.household_id
-    ):
-        raise HTTPException(status_code=403, detail="thread belongs elsewhere")
+        snapshot, run, recorded, recorded_owner = _read_thread_state(
+            reader.threads_db, thread_id
+        )
+    except sqlite3.Error as exc:
+        logger.exception("trace read %s failed", thread_id)
+        raise HTTPException(status_code=503, detail=STORE_UNAVAILABLE) from exc
+    _status_from_snapshot(
+        thread_id, snapshot, run, recorded, recorded_owner, session.household_id
+    )
     return StreamingResponse(
-        _trace_events(thread_id, runner), media_type="text/event-stream"
+        _trace_events(thread_id, reader.threads_db), media_type="text/event-stream"
     )
 
 
@@ -1503,8 +2083,10 @@ def get_wallbox_client() -> WallboxDriver:
 @app.get("/wallbox/status", response_model=WallboxStatus)
 def read_wallbox_status(
     wallbox: WallboxDriver = Depends(get_wallbox_client),
+    session: Session = Depends(current_session),
 ) -> WallboxStatus:
     """Report the wallbox live status."""
+    del session
     try:
         return wallbox.status()
     except WallboxError as exc:
@@ -1524,6 +2106,7 @@ class ProgramBody(BaseModel):
 def program_wallbox(
     body: ProgramBody,
     wallbox: WallboxDriver = Depends(get_wallbox_client),
+    session: Session = Depends(current_session),
 ) -> WallboxStatus:
     """Program one charge window behind the policy gates."""
     day = body.day or datetime.now(BERLIN).date()
@@ -1534,6 +2117,13 @@ def program_wallbox(
     decision = authorize(ChargePolicy(), start_iso, end_iso, body.max_kw)
     if not decision.allowed:
         raise HTTPException(status_code=422, detail=decision.reason)
+    logger.info(
+        "wallbox programmed by %s: %s to %s at %.1f kW",
+        session.household_id,
+        start_iso,
+        end_iso,
+        body.max_kw,
+    )
     try:
         return wallbox.program(start_iso, end_iso, body.max_kw)
     except WallboxError as exc:

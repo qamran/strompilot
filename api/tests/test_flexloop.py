@@ -3,12 +3,16 @@
 from datetime import datetime
 from pathlib import Path
 
+import pytest
+
 from strompilot.flexalarm.loop import release_due, run_all, run_once
 from strompilot.flexalarm.models import Alert
 from strompilot.flexalarm.senders import LoggingSender, SendError
 from strompilot.flexalarm.store import AlertStore
 from strompilot.memory.store import MemoryStore
 from strompilot.prices.models import BERLIN
+from strompilot.tariff.defaults import DEFAULTS
+from strompilot.tariff.engine import decompose
 from tests.fakes import FakeRouter, day_series, reply
 
 
@@ -51,6 +55,26 @@ def test_run_once_fires_and_delivers(tmp_path: Path) -> None:
         "delivered",
         "delivered",
     ]
+
+
+def test_run_once_quotes_all_in_prices(tmp_path: Path) -> None:
+    memory, alerts = stores(tmp_path)
+    router = FakeRouter({"watcher": [reply('{"fire": true, "reason": "gut"}')] * 3})
+    run_once(
+        household_id="hh1",
+        series=day_series(prices()),
+        memory=memory,
+        alerts=alerts,
+        router=router,
+        senders=[LoggingSender()],
+        now=noon(),
+    )
+    cheap = next(
+        alert for alert in alerts.list_alerts("hh1") if alert.kind == "cheap_window"
+    )
+    expected = f"{decompose(85.0, DEFAULTS).total:.2f}".replace(".", ",")
+    assert expected in cheap.title
+    assert "8,50" not in cheap.title
 
 
 def test_triage_skip_stores_nothing_and_reports(tmp_path: Path) -> None:
@@ -209,6 +233,30 @@ def test_total_sender_failure_marks_failed_with_error(tmp_path: Path) -> None:
     assert report.delivered == 0
     assert len(report.errors) == 2
     assert [a.status for a in alerts.list_alerts("hh1")] == ["failed", "failed"]
+
+
+def test_delivery_failure_logs_with_traceback(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    class Failing:
+        channel = "webhook"
+
+        def send(self, alert: Alert) -> None:
+            raise SendError("hook down")
+
+    memory, alerts = stores(tmp_path)
+    router = FakeRouter({"watcher": [reply('{"fire": true, "reason": "gut"}')] * 3})
+    with caplog.at_level("ERROR", logger="strompilot.flexalarm.loop"):
+        run_once(
+            household_id="hh1",
+            series=day_series(prices()),
+            memory=memory,
+            alerts=alerts,
+            router=router,
+            senders=[Failing()],
+            now=noon(),
+        )
+    assert "hook down" in caplog.text
 
 
 def test_devices_and_recent_alerts_reach_triage(tmp_path: Path) -> None:

@@ -5,7 +5,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-KINDS = frozenset({"extraction", "narration", "schedule", "retrieval", "redteam"})
+KINDS = frozenset(
+    {"extraction", "narration", "schedule", "retrieval", "redteam", "judge"}
+)
 
 
 @dataclass(frozen=True)

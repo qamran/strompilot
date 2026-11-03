@@ -36,12 +36,22 @@ CLEAN = (
 )
 
 
-def test_dataset_loads_32_valid_cases() -> None:
-    """The dataset holds 32 well-formed cases across five kinds."""
+def test_dataset_loads_37_valid_cases() -> None:
+    """The dataset holds 37 well-formed cases across six kinds."""
     cases = load_cases(CASES_PATH)
-    assert len(cases) == 32
+    assert len(cases) == 37
     kinds = {case.kind for case in cases}
-    assert kinds == {"extraction", "narration", "schedule", "retrieval", "redteam"}
+    assert kinds == {
+        "extraction",
+        "narration",
+        "schedule",
+        "retrieval",
+        "redteam",
+        "judge",
+    }
+    grounded = [case for case in cases if case.kind == "judge"]
+    assert len(grounded) == 5
+    assert all(case.expected.get("max_score") == 0 for case in grounded)
 
 
 def test_dataset_ids_are_unique() -> None:
@@ -304,6 +314,33 @@ def _narration_case(case_id: str) -> EvalCase:
     )
 
 
+def test_run_live_scores_judge_groundedness() -> None:
+    """Judge-kind cases pass only when the score stays under the ceiling."""
+    router = FakeRouter(
+        {
+            "judge": [
+                reply("SCORE: 0\nRATIONALE: invented slot.", SPARK_OPEN_MODEL),
+                reply("SCORE: 4\nRATIONALE: clean.", SPARK_OPEN_MODEL),
+            ]
+        }
+    )
+    made_up = EvalCase(
+        id="jud-x",
+        kind="judge",
+        input={"output": "Die Waschmaschine läuft um 09:00 Uhr."},
+        expected={"slots": [], "max_score": 0},
+    )
+    clean = EvalCase(
+        id="jud-y",
+        kind="judge",
+        input={"output": CLEAN},
+        expected={"slots": ["Waschmaschine 02:00-04:00"], "max_score": 0},
+    )
+    report = run_live([made_up, clean], router)
+    assert report["passed"] == 1
+    assert report["records"][0]["judge_score"] == 0
+
+
 def test_run_live_fails_on_judge_gibberish() -> None:
     """A malformed judge reply fails the case instead of crashing."""
     router = FakeRouter(
@@ -340,5 +377,6 @@ def test_thresholds_doc_names_every_check() -> None:
         "schedule.exact_windows",
         "retrieval.top_k_hit",
         "redteam.block_rate",
+        "judge.groundedness",
     ]:
         assert check in doc

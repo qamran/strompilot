@@ -5,6 +5,9 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import ClassVar
+
+from strompilot.db import connect
 
 from .models import MeterError, MeterReading
 
@@ -37,11 +40,15 @@ def _require(label: str, value: str) -> str:
 class MeterStore:
     """Household-scoped readings; only confirmed ones feed the math."""
 
+    _SCHEMA_READY: ClassVar[set[Path]] = set()
+
     def __init__(self, path: Path) -> None:
         self._path = path
         path.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(path) as conn:
-            conn.executescript(_SCHEMA)
+        if path not in MeterStore._SCHEMA_READY:
+            with connect(path) as conn:
+                conn.executescript(_SCHEMA)
+            MeterStore._SCHEMA_READY.add(path)
             columns = {
                 row[1] for row in conn.execute("PRAGMA table_info(meter_readings)")
             }
@@ -51,7 +58,7 @@ class MeterStore:
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
         """Yield one committed-plus-closed connection per operation."""
-        conn = sqlite3.connect(self._path)
+        conn = connect(self._path)
         try:
             with conn:
                 yield conn
@@ -181,6 +188,20 @@ class MeterStore:
                 (household_id,),
             ).fetchall()
         return [self._to_reading(row) for row in rows]
+
+    def forget_household(self, household_id: str) -> list[str]:
+        """Delete one household's readings, returning its photo paths."""
+        household_id = _require("household_id", household_id)
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT photo_path FROM meter_readings WHERE household_id = ?",
+                (household_id,),
+            ).fetchall()
+            conn.execute(
+                "DELETE FROM meter_readings WHERE household_id = ?",
+                (household_id,),
+            )
+        return [str(row[0]) for row in rows if row[0]]
 
     def has_data(self, household_id: str) -> bool:
         """Report whether one household owns any reading."""

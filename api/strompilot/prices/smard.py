@@ -8,7 +8,7 @@ import httpx
 from strompilot.prices.models import PricePoint, berlin_day_bounds
 
 BASE_URL = "https://www.smard.de/app/chart_data/4169/DE-LU"
-TIMEOUT_SECONDS = 30.0
+TIMEOUT_SECONDS = 5.0
 
 
 def parse_smard(payload: dict[str, Any], target: date) -> list[PricePoint]:

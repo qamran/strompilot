@@ -15,6 +15,7 @@ export default function SignInPage() {
   const [devLink, setDevLink] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [checked, setChecked] = useState(false);
 
   async function send() {
     setError("");
@@ -24,7 +25,7 @@ export default function SignInPage() {
     }
     setBusy(true);
     try {
-      const receipt = await requestLink(email.trim());
+      const receipt = await requestLink(email.trim(), checked);
       setSent(true);
       setDevLink(receipt.dev_link);
     } catch (err) {
@@ -58,6 +59,7 @@ export default function SignInPage() {
           )}
         </>
       ) : (
+        <>
         <div className="form-row">
           <label>
             {t.emailLabel}{" "}
@@ -76,6 +78,17 @@ export default function SignInPage() {
             {t.sendLink}
           </button>
         </div>
+        <p className="muted">
+          <label>
+            <input
+              type="checkbox"
+              checked={checked}
+              onChange={(event) => setChecked(event.target.checked)}
+            />{" "}
+            {t.signinConsent}
+          </label>
+        </p>
+        </>
       )}
     </section>
   );

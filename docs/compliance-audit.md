@@ -34,8 +34,10 @@ code and the test that prove it.
   (plan, photo, watch, solar), remembered per tab in sessionStorage,
   never in a cookie, never sent to the server. Proof:
   `web/components/ConsentGate.tsx`, the consent e2e journey.
-- [x] Forgetting a household deletes its preferences and memories;
-  sign-out revokes the session. Proof: `test_memory_api.py`,
+- [x] Forgetting a household deletes its preferences, memories,
+  meter readings and photos, alerts, report art, sessions, magic-link
+  tokens, and plan threads; sign-out revokes the session. Proof:
+  `test_memory_api.py::test_forget_household_cascades_everywhere`,
   `test_auth_api.py::test_sign_out_revokes_the_session`.
 
 ## Secrets

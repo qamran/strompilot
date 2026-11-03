@@ -24,7 +24,7 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
   }
 
   const entries: Entry[] = [
-    { label: t.navPrices, hint: "/", run: () => go("/") },
+    { label: t.navToday, hint: "/", run: () => go("/") },
     { label: t.navSchedule, hint: "/plan", run: () => go("/plan") },
     { label: t.navMeter, hint: "/meter", run: () => go("/meter") },
     { label: t.navAlarms, hint: "/alarms", run: () => go("/alarms") },

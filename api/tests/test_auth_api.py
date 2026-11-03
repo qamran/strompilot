@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from strompilot.auth.store import AuthStore
 from strompilot.flexalarm.store import AlertStore
-from strompilot.main import SESSION_COOKIE, app
+from strompilot.main import SESSION_COOKIE, app, reset_link_rate_limits
 from strompilot.memory.store import MemoryStore
 from strompilot.metervision.store import MeterStore
 
@@ -21,11 +21,57 @@ def _client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     return TestClient(app)
 
 
+def test_request_link_omits_dev_link_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Log mode alone never returns the magic link in the response."""
+    monkeypatch.delenv("STROMPILOT_MAILER", raising=False)
+    monkeypatch.delenv("STROMPILOT_DEV_LINKS", raising=False)
+    client = _client(tmp_path, monkeypatch)
+    res = client.post("/auth/request-link", json={"email": "lena@example.de"})
+    assert res.status_code == 200
+    body = res.json()
+    assert body["email"] == "lena@example.de"
+    assert body["sent"] is True
+    assert body["dev_link"] is None
+
+
+def test_request_link_returns_dev_link_with_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The explicit dev flag returns the link for local testing."""
+    monkeypatch.delenv("STROMPILOT_MAILER", raising=False)
+    monkeypatch.setenv("STROMPILOT_DEV_LINKS", "1")
+    client = _client(tmp_path, monkeypatch)
+    res = client.post("/auth/request-link", json={"email": "lena@example.de"})
+    assert res.status_code == 200
+    assert "/auth/verify?token=" in res.json()["dev_link"]
+
+
+def test_request_link_rate_limits_abuse(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Flooding request-link trips a 429 instead of minting tokens."""
+    client = _client(tmp_path, monkeypatch)
+    reset_link_rate_limits()
+    try:
+        statuses = [
+            client.post(
+                "/auth/request-link", json={"email": f"flood{n}@example.de"}
+            ).status_code
+            for n in range(55)
+        ]
+    finally:
+        reset_link_rate_limits()
+    assert 429 in statuses
+
+
 def test_request_link_returns_dev_link_in_log_mode(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Requesting a link in log mode answers sent plus a dev link."""
     monkeypatch.delenv("STROMPILOT_MAILER", raising=False)
+    monkeypatch.setenv("STROMPILOT_DEV_LINKS", "1")
     client = _client(tmp_path, monkeypatch)
     res = client.post("/auth/request-link", json={"email": "lena@example.de"})
     assert res.status_code == 200
@@ -48,6 +94,7 @@ def test_verify_sets_session_cookie_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Verifying consumes the link, sets the cookie, and rejects reuse."""
+    monkeypatch.setenv("STROMPILOT_DEV_LINKS", "1")
     client = _client(tmp_path, monkeypatch)
     link = client.post("/auth/request-link", json={"email": "lena@example.de"}).json()[
         "dev_link"
@@ -64,6 +111,36 @@ def test_verify_sets_session_cookie_once(
     assert second.status_code == 401
     unknown = client.get("/auth/verify?token=never-issued")
     assert unknown.status_code == 401
+
+
+def test_consent_at_sign_in_lands_in_the_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Agreeing at sign-in stores consent server-side for the household."""
+    monkeypatch.setenv("STROMPILOT_DEV_LINKS", "1")
+    client = _client(tmp_path, monkeypatch)
+    link = client.post(
+        "/auth/request-link", json={"email": "lena@example.de", "consent": True}
+    ).json()["dev_link"]
+    token = link.split("token=")[1]
+    assert client.get(f"/auth/verify?token={token}").status_code == 200
+    me = client.get("/auth/me")
+    assert me.json()["consent_agreed"] is True
+
+
+def test_sign_in_without_consent_leaves_it_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Skipping consent at sign-in leaves the session unconsented."""
+    monkeypatch.setenv("STROMPILOT_DEV_LINKS", "1")
+    client = _client(tmp_path, monkeypatch)
+    link = client.post("/auth/request-link", json={"email": "lena@example.de"}).json()[
+        "dev_link"
+    ]
+    token = link.split("token=")[1]
+    assert client.get(f"/auth/verify?token={token}").status_code == 200
+    me = client.get("/auth/me")
+    assert me.json()["consent_agreed"] is False
 
 
 def test_me_needs_a_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -41,9 +41,12 @@ def test_missing_date_reads_none(tmp_path: Path) -> None:
 
 def test_fetch_marks_round_trip(tmp_path: Path) -> None:
     cache = DiskCache(tmp_path)
-    assert cache.last_fetch("awattar") is None
-    cache.mark_fetched("awattar", date(2026, 10, 29))
-    assert cache.last_fetch("awattar") == date(2026, 10, 29)
+    target = date(2026, 10, 29)
+    assert cache.last_fetch("awattar", target) is None
+    cache.mark_fetched("awattar", target, date(2026, 10, 29))
+    assert cache.last_fetch("awattar", target) == date(2026, 10, 29)
+    assert cache.last_fetch("awattar", date(2026, 10, 30)) is None
+    assert cache.last_fetch("smard", target) is None
 
 
 def test_old_entry_stays_readable_for_stale_fallback(tmp_path: Path) -> None:

@@ -16,7 +16,6 @@ import Odometer from "../components/Odometer";
 import WhyOverlay from "../components/WhyOverlay";
 import GlassBox from "../components/GlassBox";
 import SourceChip from "../components/SourceChip";
-import ConsentGate from "../components/ConsentGate";
 import pricesFixture from "../fixtures/prices.json";
 import planFixture from "../fixtures/plan.json";
 import alertsFixture from "../fixtures/alerts.json";
@@ -105,14 +104,4 @@ describe("key views on fixtures", () => {
     expect(chip).toContain("Sample data");
   });
 
-  it("renders consent as a slim bar above visible content", () => {
-    const html = withLang(
-      <ConsentGate text="Consent text here" storageKey="plan">
-        {() => "secret plan form"}
-      </ConsentGate>,
-    );
-    expect(html).toContain("consent-bar");
-    expect(html).toContain("I agree");
-    expect(html).toContain("secret plan form");
-  });
 });

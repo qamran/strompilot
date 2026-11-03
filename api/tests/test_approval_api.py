@@ -89,6 +89,25 @@ def test_approve_flow_end_to_end(
     assert final.json()["status"] == "published"
 
 
+def test_approve_dispatch_reaches_the_wallbox_driver(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Resume wires the wallbox driver: no EV slot skips for that reason."""
+    monkeypatch.setenv("THREADS_DB", str(tmp_path / "threads.db"))
+    monkeypatch.setenv("MEMORY_DB", str(tmp_path / "memory.db"))
+    monkeypatch.setenv("META_API_KEY", "test-meta")
+    monkeypatch.setenv("BASETEN_API_KEY", "test-baseten")
+    pause_thread(tmp_path / "threads.db", "t1")
+    client = TestClient(app)
+    sign_in(client, "h1")
+    decided = client.post("/approvals/threads/t1/decide", json={"approved": True})
+    assert decided.status_code == 200
+    trace = client.get("/plan/t1/trace")
+    assert trace.status_code == 200
+    assert "no E-Auto slot" in trace.text
+    assert "no wallbox" not in trace.text
+
+
 def test_reject_flow_end_to_end(
     approval_setup: tuple[TestClient, Path],
 ) -> None:
@@ -122,6 +141,62 @@ def test_finished_thread_without_plan_reports_done(
     assert response.json()["status"] == "done"
 
 
+def test_start_checkpoint_reads_back_as_running() -> None:
+    """The __start__-only checkpoint has no owner yet; the run row does."""
+    from datetime import UTC, datetime
+    from types import SimpleNamespace
+    from typing import cast
+
+    from langgraph.checkpoint.base import CheckpointTuple
+
+    from strompilot.main import RunRecord, _status_from_snapshot
+
+    snapshot = cast(
+        CheckpointTuple,
+        SimpleNamespace(
+            checkpoint={"channel_values": {"__start__": {"request": "plane"}}},
+            pending_writes=None,
+        ),
+    )
+    run = RunRecord(
+        thread_id="t1",
+        household_id="h1",
+        started_at=datetime.now(UTC).isoformat(),
+        finished_at=None,
+    )
+    current = _status_from_snapshot("t1", snapshot, run, None, None, "h1")
+    assert current.status == "running"
+
+
+def test_start_checkpoint_for_other_household_stays_forbidden() -> None:
+    """The run-row fallback must not leak across households."""
+    from types import SimpleNamespace
+    from typing import cast
+
+    import pytest
+    from fastapi import HTTPException
+    from langgraph.checkpoint.base import CheckpointTuple
+
+    from strompilot.main import RunRecord, _status_from_snapshot
+
+    snapshot = cast(
+        CheckpointTuple,
+        SimpleNamespace(
+            checkpoint={"channel_values": {"__start__": {"request": "plane"}}},
+            pending_writes=None,
+        ),
+    )
+    run = RunRecord(
+        thread_id="t1",
+        household_id="h2",
+        started_at="2026-11-03T08:00:00+00:00",
+        finished_at=None,
+    )
+    with pytest.raises(HTTPException) as caught:
+        _status_from_snapshot("t1", snapshot, run, None, None, "h1")
+    assert caught.value.status_code == 403
+
+
 def test_unknown_thread_returns_404(
     approval_setup: tuple[TestClient, Path],
 ) -> None:
@@ -146,13 +221,21 @@ def test_decide_on_settled_thread_returns_409(
     assert second.status_code == 409
 
 
-def test_missing_keys_returns_500(
+def test_reads_work_without_keys_but_decide_needs_them(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("THREADS_DB", str(tmp_path / "threads.db"))
+    """Reading threads needs no model keys; resuming a run still does."""
+    saver_path = tmp_path / "threads.db"
+    monkeypatch.setenv("THREADS_DB", str(saver_path))
     monkeypatch.setenv("MEMORY_DB", str(tmp_path / "memory.db"))
     monkeypatch.delenv("META_API_KEY", raising=False)
     monkeypatch.delenv("BASETEN_API_KEY", raising=False)
+    pause_thread(saver_path, "t1")
     client = TestClient(app)
     sign_in(client, "h1")
-    assert client.get("/approvals/threads/t1").status_code == 500
+    assert client.get("/approvals/threads/t1").status_code == 200
+    assert client.get("/plan/t1").status_code == 200
+    assert (
+        client.post("/approvals/threads/t1/decide", json={"approved": True}).status_code
+        == 500
+    )

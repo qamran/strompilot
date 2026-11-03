@@ -5,7 +5,7 @@ from strompilot.llm.types import ChatRouter, ImageAttachment, LlmError, Message
 
 from .models import DigitReading, MeterError, SerialReading
 
-READ_TOKENS = 500
+READ_TOKENS = 4000
 
 _SYSTEM = """Read the electricity meter display in the photo. Reply with
 exactly one JSON object and nothing else:

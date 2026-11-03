@@ -33,7 +33,7 @@ def route_perceive(state: PlanState) -> Literal["analyst", "end"]:
     return "end"
 
 
-def route_next(state: PlanState) -> Literal["scheduler", "publish", "end"]:
+def route_next(state: PlanState) -> Literal["analyst", "publish", "end"]:
     """Route after the critic: loop on veto, publish on approval."""
     if state.get("error"):
         return "end"
@@ -42,7 +42,7 @@ def route_next(state: PlanState) -> Literal["scheduler", "publish", "end"]:
         return "end"
     if verdict["approved"]:
         return "publish"
-    return "scheduler"
+    return "analyst"
 
 
 def route_dispatch(state: PlanState) -> Literal["publish", "end"]:
@@ -50,6 +50,13 @@ def route_dispatch(state: PlanState) -> Literal["publish", "end"]:
     if state.get("error"):
         return "end"
     return "publish"
+
+
+def route_schedule(state: PlanState) -> Literal["explainer", "end"]:
+    """Route after the scheduler: an empty extraction ends the run."""
+    if state.get("error"):
+        return "end"
+    return "explainer"
 
 
 def build_graph(
@@ -63,7 +70,7 @@ def build_graph(
     """Compile the supervisor graph with one router for every worker."""
     graph = StateGraph(PlanState)
     graph.add_node("perceive", partial(perceive_node, router=router))
-    graph.add_node("analyst", partial(analyst_node, router=router))
+    graph.add_node("analyst", partial(analyst_node, router=router, memory=memory))
     graph.add_node(
         "scheduler", partial(scheduler_node, price_loader=price_loader, memory=memory)
     )
@@ -84,12 +91,14 @@ def build_graph(
         "perceive", route_perceive, {"analyst": "analyst", "end": END}
     )
     graph.add_edge("analyst", "scheduler")
-    graph.add_edge("scheduler", "explainer")
+    graph.add_conditional_edges(
+        "scheduler", route_schedule, {"explainer": "explainer", "end": END}
+    )
     graph.add_edge("explainer", "critic")
     graph.add_conditional_edges(
         "critic",
         route_next,
-        {"scheduler": "scheduler", "publish": publish_target, "end": END},
+        {"analyst": "analyst", "publish": publish_target, "end": END},
     )
     graph.add_edge("publish", END)
     return graph.compile(checkpointer=checkpointer)
